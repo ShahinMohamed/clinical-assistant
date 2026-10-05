@@ -1,0 +1,23 @@
+services:
+  db:
+    image: pgvector/pgvector:0.8.6-pg17
+    container_name: clinical-assistant-db
+    environment:
+      POSTGRES_DB: clinical_assistant
+      POSTGRES_USER: clinical
+      POSTGRES_PASSWORD: clinical
+    ports:
+      - "5432:5432"
+    volumes:
+      - clinical_db:/var/lib/postgresql/data
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U clinical -d clinical_assistant
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  clinical_db:

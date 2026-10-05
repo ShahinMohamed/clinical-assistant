@@ -1,0 +1,74 @@
+version: 1
+generated_at: '2026-10-04T12:53:51.517036+00:00'
+dataset:
+  source: Synthea
+  synthetic: true
+  run_id: 1
+  dataset_fingerprint: 976826c443b902e2d13f2617bcb1570a143f7b702c097597f7617dd0c6a69cd1
+  analysis_date: '2026-10-04'
+  data_through_date: '2026-08-16'
+  freshness_days: 49
+cases:
+- id: cohort_001
+  question: How many synthetic patients are in the dataset?
+  analysis_date: '2026-10-04'
+  expected_count: 109
+  stale_data_warning: false
+  status: verified
+- id: cohort_002
+  question: How many synthetic patients are adults?
+  analysis_date: '2026-10-04'
+  expected_count: 88
+  stale_data_warning: false
+  status: verified
+- id: cohort_003
+  question: How many synthetic adults have active type 2 diabetes?
+  analysis_date: '2026-10-04'
+  expected_count: 6
+  stale_data_warning: false
+  status: verified
+- id: cohort_004
+  question: How many synthetic adults have active hypertension?
+  analysis_date: '2026-10-04'
+  expected_count: 20
+  stale_data_warning: false
+  status: verified
+- id: cohort_005
+  question: How many synthetic adults have both type 2 diabetes and hypertension?
+  analysis_date: '2026-10-04'
+  expected_count: 2
+  stale_data_warning: false
+  status: verified
+- id: cohort_006
+  question: How many synthetic patients have at least one dated HbA1c observation?
+  analysis_date: '2026-10-04'
+  expected_count: 39
+  stale_data_warning: false
+  status: verified
+- id: cohort_007
+  question: How many synthetic adults with type 2 diabetes have an HbA1c observation
+    in the last 12 months?
+  analysis_date: '2026-10-04'
+  expected_count: 4
+  stale_data_warning: true
+  status: verified
+- id: cohort_008
+  question: How many synthetic adults with type 2 diabetes have no HbA1c observation
+    in the last 12 months?
+  analysis_date: '2026-10-04'
+  expected_count: 2
+  stale_data_warning: true
+  status: verified
+- id: cohort_009
+  question: How many synthetic adults with type 2 diabetes and hypertension have no
+    HbA1c observation in the last 12 months?
+  analysis_date: '2026-10-04'
+  expected_count: 0
+  stale_data_warning: true
+  status: verified
+- id: cohort_010
+  question: How many synthetic patients have no birth date?
+  analysis_date: '2026-10-04'
+  expected_count: 0
+  stale_data_warning: false
+  status: verified
