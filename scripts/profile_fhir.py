@@ -14,18 +14,30 @@ BLOOD_PRESSURE_CODES = {
 }
 
 
-def get_codes(resource):
+def get_codes(resource, system=None):
     """Return codes from a FHIR resource and its components."""
     codes = set()
     concepts = [resource.get("code", {})]
 
-    for component in resource.get("component", []):
+    components = resource.get("component", [])
+    if not isinstance(components, list):
+        raise ValueError("Resource.component is not a list")
+    for component in components:
+        if not isinstance(component, dict):
+            raise ValueError("Observation component is not an object")
         concepts.append(component.get("code", {}))
 
     for concept in concepts:
-        for coding in concept.get("coding", []):
+        if not isinstance(concept, dict):
+            raise ValueError("Resource code is not a CodeableConcept object")
+        codings = concept.get("coding", [])
+        if not isinstance(codings, list):
+            raise ValueError("CodeableConcept.coding is not a list")
+        for coding in codings:
+            if not isinstance(coding, dict):
+                raise ValueError("Coding is not an object")
             code = coding.get("code")
-            if code:
+            if isinstance(code, str) and (system is None or coding.get("system") == system):
                 codes.add(code)
 
     return codes
@@ -45,14 +57,14 @@ def profile_fhir_directory(directory):
     valid_files = 0
     invalid_files = []
 
-    for file_path in sorted(directory.glob("*.json")):
+    for file_path in sorted(directory.rglob("*.json")):
         files_scanned += 1
 
         try:
             with file_path.open(encoding="utf-8") as file:
                 bundle = json.load(file)
 
-            if bundle.get("resourceType") != "Bundle":
+            if not isinstance(bundle, dict) or bundle.get("resourceType") != "Bundle":
                 raise ValueError("Root resource is not a FHIR Bundle")
 
             entries = bundle.get("entry")
@@ -60,7 +72,12 @@ def profile_fhir_directory(directory):
             if not isinstance(entries, list):
                 raise ValueError("Bundle.entry is not a list")
 
+            file_counts = Counter()
+            file_patients = set()
+            file_markers = Counter()
             for index, entry in enumerate(entries):
+                if not isinstance(entry, dict):
+                    raise ValueError(f"Entry {index} is not an object")
                 resource = entry.get("resource")
 
                 if not isinstance(resource, dict):
@@ -70,46 +87,52 @@ def profile_fhir_directory(directory):
 
                 resource_type = resource.get("resourceType")
 
-                if not resource_type:
+                if not isinstance(resource_type, str) or not resource_type:
                     raise ValueError(
                         f"Entry {index} has no resourceType"
                     )
 
-                resource_counts[resource_type] += 1
+                file_counts[resource_type] += 1
 
                 if resource_type == "Patient":
                     patient_id = resource.get("id")
 
-                    if patient_id:
-                        patient_ids.add(patient_id)
+                    if not isinstance(patient_id, str) or not patient_id:
+                        raise ValueError(f"Entry {index} has no usable Patient.id")
+                    file_patients.add(patient_id)
 
                 if resource_type in {"Condition", "Observation"}:
-                    codes = get_codes(resource)
+                    system = "http://snomed.info/sct" if resource_type == "Condition" else "http://loinc.org"
+                    codes = get_codes(resource, system)
 
                     if (
                         resource_type == "Condition"
                         and codes & TYPE_2_DIABETES_CODES
                     ):
-                        markers["type_2_diabetes"] += 1
+                        file_markers["type_2_diabetes"] += 1
 
                     if (
                         resource_type == "Observation"
                         and codes & HBA1C_CODES
                     ):
-                        markers["hba1c"] += 1
+                        file_markers["hba1c"] += 1
 
                     if (
                         resource_type == "Observation"
                         and codes & BLOOD_PRESSURE_CODES
                     ):
-                        markers["blood_pressure"] += 1
+                        file_markers["blood_pressure"] += 1
 
+            resource_counts.update(file_counts)
+            patient_ids.update(file_patients)
+            for name in markers:
+                markers[name] += file_markers[name]
             valid_files += 1
 
         except (json.JSONDecodeError, OSError, ValueError) as error:
             invalid_files.append(
                 {
-                    "file": file_path.name,
+                    "file": file_path.relative_to(directory).as_posix(),
                     "error": str(error),
                 }
             )

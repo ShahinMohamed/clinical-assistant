@@ -1,5 +1,16 @@
 -- name: quality_summary
 SELECT
+    (SELECT COUNT(DISTINCT resource_id) FROM raw_fhir_resources
+     WHERE run_id = %(run_id)s AND resource_type = 'Patient') AS raw_patients,
+    (SELECT COUNT(DISTINCT resource_id) FROM raw_fhir_resources
+     WHERE run_id = %(run_id)s AND resource_type = 'Condition') AS raw_conditions,
+    (SELECT COUNT(DISTINCT resource_id) FROM raw_fhir_resources
+     WHERE run_id = %(run_id)s AND resource_type = 'Observation') AS raw_observations,
+    (SELECT COUNT(*) FROM observations
+     WHERE run_id = %(run_id)s AND code_system = 'http://loinc.org'
+       AND code IN ('85354-9', '55284-4')
+       AND (systolic_value IS NULL OR diastolic_value IS NULL
+            OR systolic_unit IS NULL OR diastolic_unit IS NULL)) AS bp_panels_missing_components,
     (
         SELECT COUNT(*)
         FROM raw_fhir_resources
@@ -216,12 +227,13 @@ WHERE p.run_id = %(run_id)s
             c.abatement_at IS NULL
             OR c.abatement_at::date > %(analysis_date)s::date
         )
-        AND LOWER(COALESCE(c.clinical_status, ''))
-            NOT IN (
-                'inactive',
-                'resolved',
-                'entered-in-error'
-            )
+        AND LOWER(COALESCE(c.verification_status, '')) <> 'entered-in-error'
+        AND LOWER(COALESCE(c.clinical_status, '')) <> 'entered-in-error'
+        AND (
+            LOWER(COALESCE(c.clinical_status, ''))
+                NOT IN ('inactive', 'resolved', 'entered-in-error')
+            OR c.abatement_at::date > %(analysis_date)s::date
+        )
   );
 
 
@@ -247,12 +259,13 @@ WHERE p.run_id = %(run_id)s
             c.abatement_at IS NULL
             OR c.abatement_at::date > %(analysis_date)s::date
         )
-        AND LOWER(COALESCE(c.clinical_status, ''))
-            NOT IN (
-                'inactive',
-                'resolved',
-                'entered-in-error'
-            )
+        AND LOWER(COALESCE(c.verification_status, '')) <> 'entered-in-error'
+        AND LOWER(COALESCE(c.clinical_status, '')) <> 'entered-in-error'
+        AND (
+            LOWER(COALESCE(c.clinical_status, ''))
+                NOT IN ('inactive', 'resolved', 'entered-in-error')
+            OR c.abatement_at::date > %(analysis_date)s::date
+        )
   );
 
 
@@ -279,12 +292,13 @@ WHERE p.run_id = %(run_id)s
             c.abatement_at IS NULL
             OR c.abatement_at::date > %(analysis_date)s::date
         )
-        AND LOWER(COALESCE(c.clinical_status, ''))
-            NOT IN (
-                'inactive',
-                'resolved',
-                'entered-in-error'
-            )
+        AND LOWER(COALESCE(c.verification_status, '')) <> 'entered-in-error'
+        AND LOWER(COALESCE(c.clinical_status, '')) <> 'entered-in-error'
+        AND (
+            LOWER(COALESCE(c.clinical_status, ''))
+                NOT IN ('inactive', 'resolved', 'entered-in-error')
+            OR c.abatement_at::date > %(analysis_date)s::date
+        )
   )
 
   AND EXISTS (
@@ -302,12 +316,13 @@ WHERE p.run_id = %(run_id)s
             c.abatement_at IS NULL
             OR c.abatement_at::date > %(analysis_date)s::date
         )
-        AND LOWER(COALESCE(c.clinical_status, ''))
-            NOT IN (
-                'inactive',
-                'resolved',
-                'entered-in-error'
-            )
+        AND LOWER(COALESCE(c.verification_status, '')) <> 'entered-in-error'
+        AND LOWER(COALESCE(c.clinical_status, '')) <> 'entered-in-error'
+        AND (
+            LOWER(COALESCE(c.clinical_status, ''))
+                NOT IN ('inactive', 'resolved', 'entered-in-error')
+            OR c.abatement_at::date > %(analysis_date)s::date
+        )
   );
 
 
@@ -343,12 +358,13 @@ WHERE p.run_id = %(run_id)s
             c.abatement_at IS NULL
             OR c.abatement_at::date > %(analysis_date)s::date
         )
-        AND LOWER(COALESCE(c.clinical_status, ''))
-            NOT IN (
-                'inactive',
-                'resolved',
-                'entered-in-error'
-            )
+        AND LOWER(COALESCE(c.verification_status, '')) <> 'entered-in-error'
+        AND LOWER(COALESCE(c.clinical_status, '')) <> 'entered-in-error'
+        AND (
+            LOWER(COALESCE(c.clinical_status, ''))
+                NOT IN ('inactive', 'resolved', 'entered-in-error')
+            OR c.abatement_at::date > %(analysis_date)s::date
+        )
   )
 
   AND EXISTS (
@@ -388,12 +404,13 @@ WHERE p.run_id = %(run_id)s
             c.abatement_at IS NULL
             OR c.abatement_at::date > %(analysis_date)s::date
         )
-        AND LOWER(COALESCE(c.clinical_status, ''))
-            NOT IN (
-                'inactive',
-                'resolved',
-                'entered-in-error'
-            )
+        AND LOWER(COALESCE(c.verification_status, '')) <> 'entered-in-error'
+        AND LOWER(COALESCE(c.clinical_status, '')) <> 'entered-in-error'
+        AND (
+            LOWER(COALESCE(c.clinical_status, ''))
+                NOT IN ('inactive', 'resolved', 'entered-in-error')
+            OR c.abatement_at::date > %(analysis_date)s::date
+        )
   )
 
   AND NOT EXISTS (
@@ -433,12 +450,13 @@ WHERE p.run_id = %(run_id)s
             c.abatement_at IS NULL
             OR c.abatement_at::date > %(analysis_date)s::date
         )
-        AND LOWER(COALESCE(c.clinical_status, ''))
-            NOT IN (
-                'inactive',
-                'resolved',
-                'entered-in-error'
-            )
+        AND LOWER(COALESCE(c.verification_status, '')) <> 'entered-in-error'
+        AND LOWER(COALESCE(c.clinical_status, '')) <> 'entered-in-error'
+        AND (
+            LOWER(COALESCE(c.clinical_status, ''))
+                NOT IN ('inactive', 'resolved', 'entered-in-error')
+            OR c.abatement_at::date > %(analysis_date)s::date
+        )
   )
 
   AND EXISTS (
@@ -456,12 +474,13 @@ WHERE p.run_id = %(run_id)s
             c.abatement_at IS NULL
             OR c.abatement_at::date > %(analysis_date)s::date
         )
-        AND LOWER(COALESCE(c.clinical_status, ''))
-            NOT IN (
-                'inactive',
-                'resolved',
-                'entered-in-error'
-            )
+        AND LOWER(COALESCE(c.verification_status, '')) <> 'entered-in-error'
+        AND LOWER(COALESCE(c.clinical_status, '')) <> 'entered-in-error'
+        AND (
+            LOWER(COALESCE(c.clinical_status, ''))
+                NOT IN ('inactive', 'resolved', 'entered-in-error')
+            OR c.abatement_at::date > %(analysis_date)s::date
+        )
   )
 
   AND NOT EXISTS (

@@ -16,3 +16,6 @@ reports/*
 .env
 .DS_Store
 
+# Downloaded evidence and generated extraction outputs are reproducible.
+data/evidence/raw/
+data/evidence/processed/

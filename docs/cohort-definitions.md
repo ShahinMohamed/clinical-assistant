@@ -60,10 +60,22 @@ A condition is active on the analysis date when all applicable rules pass:
 
 1. Its onset date is missing or on/before the analysis date.
 2. Its abatement date is missing or after the analysis date.
-3. Its clinical status is not:
+3. Its verification status is not `entered-in-error`.
+4. Its clinical status is not:
    - `inactive`
    - `resolved`
    - `entered-in-error`
+
+For a historical date before a recorded abatement date, a condition currently
+marked inactive or resolved is still included if the onset rule passes. It was
+not yet abated at that historical date. This is a date-based approximation:
+FHIR snapshots do not reconstruct every status change or recurrence. Without
+an abatement date, an inactive/resolved condition remains excluded.
+
+`entered-in-error` normally belongs to FHIR `verificationStatus`, not
+`clinicalStatus`. An entered-in-error verification status always excludes the
+condition, regardless of dates. The clinical-status check also rejects that
+value defensively if a malformed source puts it in the wrong field.
 
 Clinical status comparison is case-insensitive.
 

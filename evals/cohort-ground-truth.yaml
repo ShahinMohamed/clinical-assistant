@@ -1,5 +1,7 @@
 version: 1
-generated_at: '2026-10-04T12:53:51.517036+00:00'
+generation_method: reference_sql; not independent clinical validation
+query_sha256: 0a6def8bb71c3b8fd1ad091281234bc371c551a0b770e62e5dd7a8bd4ead7408
+generated_at: '2026-10-05T13:23:38.278516+00:00'
 dataset:
   source: Synthea
   synthetic: true
@@ -13,62 +15,62 @@ cases:
   question: How many synthetic patients are in the dataset?
   analysis_date: '2026-10-04'
   expected_count: 109
-  stale_data_warning: false
-  status: verified
+  stale_data_warning: true
+  status: reference_generated
 - id: cohort_002
   question: How many synthetic patients are adults?
   analysis_date: '2026-10-04'
   expected_count: 88
-  stale_data_warning: false
-  status: verified
+  stale_data_warning: true
+  status: reference_generated
 - id: cohort_003
   question: How many synthetic adults have active type 2 diabetes?
   analysis_date: '2026-10-04'
   expected_count: 6
-  stale_data_warning: false
-  status: verified
+  stale_data_warning: true
+  status: reference_generated
 - id: cohort_004
   question: How many synthetic adults have active hypertension?
   analysis_date: '2026-10-04'
   expected_count: 20
-  stale_data_warning: false
-  status: verified
+  stale_data_warning: true
+  status: reference_generated
 - id: cohort_005
   question: How many synthetic adults have both type 2 diabetes and hypertension?
   analysis_date: '2026-10-04'
   expected_count: 2
-  stale_data_warning: false
-  status: verified
+  stale_data_warning: true
+  status: reference_generated
 - id: cohort_006
   question: How many synthetic patients have at least one dated HbA1c observation?
   analysis_date: '2026-10-04'
   expected_count: 39
-  stale_data_warning: false
-  status: verified
+  stale_data_warning: true
+  status: reference_generated
 - id: cohort_007
   question: How many synthetic adults with type 2 diabetes have an HbA1c observation
     in the last 12 months?
   analysis_date: '2026-10-04'
   expected_count: 4
   stale_data_warning: true
-  status: verified
+  status: reference_generated
 - id: cohort_008
   question: How many synthetic adults with type 2 diabetes have no HbA1c observation
     in the last 12 months?
   analysis_date: '2026-10-04'
   expected_count: 2
   stale_data_warning: true
-  status: verified
+  status: reference_generated
 - id: cohort_009
   question: How many synthetic adults with type 2 diabetes and hypertension have no
     HbA1c observation in the last 12 months?
   analysis_date: '2026-10-04'
   expected_count: 0
   stale_data_warning: true
-  status: verified
+  status: reference_generated
 - id: cohort_010
   question: How many synthetic patients have no birth date?
   analysis_date: '2026-10-04'
   expected_count: 0
-  stale_data_warning: false
-  status: verified
+  stale_data_warning: true
+  status: reference_generated

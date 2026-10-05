@@ -1,5 +1,8 @@
+import argparse
+import hashlib
 import os
 import re
+import shutil
 from datetime import UTC, date, datetime
 from pathlib import Path
 from dotenv import load_dotenv
@@ -8,12 +11,13 @@ import psycopg
 import yaml
 from psycopg.rows import dict_row
 
-load_dotenv()
+ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(ROOT / ".env")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-QUERY_FILE = Path("db/eval_queries.sql")
-EVAL_OUTPUT = Path("evals/cohort-ground-truth.yaml")
-REPORT_OUTPUT = Path("reports/data-quality.md")
+QUERY_FILE = ROOT / "db/eval_queries.sql"
+EVAL_OUTPUT = ROOT / "evals/cohort-ground-truth.yaml"
+REPORT_OUTPUT = ROOT / "reports/data-quality.md"
 
 
 ANALYSIS_DATE = "2026-10-04"
@@ -72,6 +76,7 @@ ZERO_REQUIRED = [
     "hba1c_missing_units",
     "observations_before_birth",
     "onset_after_abatement",
+    "bp_panels_missing_components",
 ]
 
 
@@ -100,6 +105,8 @@ def read_queries(sql_text):
                 f"Query {name} is empty"
             )
 
+        if name in queries:
+            raise ValueError(f"Duplicate query name: {name}")
         queries[name] = query
 
     return queries
@@ -173,6 +180,10 @@ def calculate_quality_status(
                 f"{field}: expected 0, got {actual}"
             )
 
+    for table in ("patients", "conditions", "observations"):
+        if quality[table] != quality[f"raw_{table}"]:
+            failures.append(f"{table}: normalized rows do not match distinct raw resource IDs")
+
     if data_through_date is None:
         failures.append(
             "data_through_date is missing"
@@ -207,22 +218,15 @@ def write_evaluation_file(
                 "question": question,
                 "analysis_date": analysis_date.isoformat(),
                 "expected_count": expected_count,
-                "stale_data_warning": (
-                    stale
-                    if query_id
-                    in {
-                        "cohort_007",
-                        "cohort_008",
-                        "cohort_009",
-                    }
-                    else False
-                ),
-                "status": "verified",
+                "stale_data_warning": stale,
+                "status": "reference_generated",
             }
         )
 
     document = {
         "version": 1,
+        "generation_method": "reference_sql; not independent clinical validation",
+        "query_sha256": hashlib.sha256(QUERY_FILE.read_bytes()).hexdigest(),
         "generated_at": datetime.now(UTC).isoformat(),
         "dataset": {
             "source": run["source_name"],
@@ -287,7 +291,7 @@ def write_report(
         f"- Data-through date: `{data_through_date}`",
         f"- Freshness: `{freshness_days}` days",
         "",
-        "## Import reconciliation",
+        "## Required non-empty tables and markers",
         "",
         "| Check | Expected | Actual | Status |",
         "|---|---:|---:|---|",
@@ -305,6 +309,19 @@ def write_report(
             f"| {field} | greater than 0 | "
             f"{actual} | {status} |"
         )
+
+    lines.extend(
+        [
+            "",
+            "## Import reconciliation",
+            "",
+            "| Table | Distinct raw IDs | Normalized rows | Status |",
+            "|---|---:|---:|---|",
+        ]
+    )
+    for table in ("patients", "conditions", "observations"):
+        expected, actual = quality[f"raw_{table}"], quality[table]
+        lines.append(f"| {table} | {expected} | {actual} | {'PASS' if expected == actual else 'FAIL'} |")
 
     lines.extend(
         [
@@ -434,12 +451,53 @@ def write_report(
     )
 
 
+def compare_reference(reference, run, analysis_date, results, stale):
+    """Compare with a saved baseline. Never replace it during a check."""
+    failures = []
+    dataset = reference["dataset"]
+    if dataset["dataset_fingerprint"] != run["dataset_fingerprint"]:
+        failures.append("Reference dataset fingerprint differs from selected run")
+    if dataset["analysis_date"] != analysis_date.isoformat():
+        failures.append("Reference analysis date differs")
+    if reference.get("query_sha256") != hashlib.sha256(QUERY_FILE.read_bytes()).hexdigest():
+        failures.append("Reference SQL has changed; review before refreshing the baseline")
+    cases = {case["id"]: case for case in reference["cases"]}
+    if len(cases) != len(reference["cases"]) or cases.keys() != QUESTIONS.keys():
+        failures.append("Reference question IDs are missing, duplicated or unexpected")
+    for query_id, question in QUESTIONS.items():
+        case = cases.get(query_id)
+        if not case:
+            continue
+        if case["question"] != question:
+            failures.append(f"{query_id}: question text differs")
+        if results[query_id][0]["expected_count"] != case["expected_count"]:
+            failures.append(f"{query_id}: result differs from saved reference")
+        if case.get("stale_data_warning") != stale:
+            failures.append(f"{query_id}: stale-data warning differs")
+    return failures
+
+
 def main():
+    parser = argparse.ArgumentParser(description="Check saved cohort references without overwriting them")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--generate-reference", action="store_true", help="Create a first reference file")
+    mode.add_argument("--refresh-reference", action="store_true", help="Back up and explicitly replace the reference")
+    parser.add_argument("--analysis-date", default=None, help="YYYY-MM-DD; defaults to saved date or 2026-10-04")
+    args = parser.parse_args()
+    if not DATABASE_URL:
+        parser.error("DATABASE_URL is missing; configure the project .env")
+    generate = args.generate_reference or args.refresh_reference
+    if args.generate_reference and EVAL_OUTPUT.exists():
+        parser.error("Reference already exists. Use --refresh-reference only after review")
+    if not generate and not EVAL_OUTPUT.exists():
+        parser.error("No reference exists. Use --generate-reference first")
+    reference = yaml.safe_load(EVAL_OUTPUT.read_text()) if not generate else None
     sql_text = QUERY_FILE.read_text(
         encoding="utf-8"
     )
 
-    analysis_date = date.fromisoformat(ANALYSIS_DATE)
+    selected_date = args.analysis_date or (reference["dataset"]["analysis_date"] if reference else ANALYSIS_DATE)
+    analysis_date = date.fromisoformat(selected_date)
     freshness_threshold = FRESHNESS_THRESHOLD_DAYS
 
     queries = read_queries(sql_text)
@@ -465,10 +523,19 @@ def main():
     ) as connection:
         with connection.cursor() as cursor:
             cursor.execute(
-                "SET TRANSACTION READ ONLY"
+                "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
             )
-
-            run = get_latest_run(cursor)
+            cursor.execute("SET LOCAL TIME ZONE 'UTC'")
+            if generate:
+                run = get_latest_run(cursor)
+            else:
+                cursor.execute("""
+                    SELECT run_id, dataset_fingerprint, source_name, as_of_date
+                    FROM ingestion_runs WHERE run_id=%s AND status='completed'
+                """, (reference["dataset"]["run_id"],))
+                run = cursor.fetchone()
+                if not run:
+                    raise ValueError("The saved reference ingestion run no longer exists")
 
             results = execute_queries(
                 cursor,
@@ -500,15 +567,15 @@ def main():
         quality,
         data_through_day,
     )
-
-    write_evaluation_file(
-        run,
-        analysis_date,
-        data_through_day,
-        freshness_days,
-        stale,
-        results,
-    )
+    if not generate:
+        failures.extend(compare_reference(reference, run, analysis_date, results, stale))
+    elif not failures:
+        if EVAL_OUTPUT.exists():
+            backup = ROOT / "reports/reference-backups" / (datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ") + ".yaml")
+            backup.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(EVAL_OUTPUT, backup)
+            print(f"Previous reference backed up to: {backup}")
+        write_evaluation_file(run, analysis_date, data_through_day, freshness_days, stale, results)
 
     write_report(
         run,

@@ -8,7 +8,8 @@ from pathlib import Path
 import psycopg
 from psycopg.types.json import Jsonb
 
-load_dotenv()
+ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(ROOT / ".env")
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
@@ -31,12 +32,14 @@ def calculate_fingerprint(directory, files):
 
 
 def get_resource(entry):
+    if not isinstance(entry, dict):
+        raise ValueError("Bundle entry is not an object")
     resource = entry.get("resource")
 
     if isinstance(resource, dict):
         return resource
 
-    return None
+    raise ValueError("Bundle entry does not contain a resource object")
 
 
 def build_reference_map(entries):
@@ -111,7 +114,7 @@ def get_patient_id(resource, references):
     return None
 
 
-def first_coding(concept):
+def first_coding(concept, preferred_system=None):
     if not isinstance(concept, dict):
         return None, None, None
 
@@ -120,7 +123,10 @@ def first_coding(concept):
     if not isinstance(codings, list) or not codings:
         return None, None, concept.get("text")
 
-    coding = codings[0]
+    coding = next(
+        (item for item in codings if isinstance(item, dict) and item.get("system") == preferred_system),
+        codings[0],
+    ) if preferred_system else codings[0]
 
     if not isinstance(coding, dict):
         return None, None, concept.get("text")
@@ -138,6 +144,30 @@ def get_status(resource):
     )
 
     return code or display
+
+
+def get_verification_status(resource):
+    return first_coding(resource.get("verificationStatus"))[1]
+
+
+def get_blood_pressure(resource):
+    """Keep panel components on the parent row, without inventing FHIR IDs."""
+    values = {"8480-6": (None, None), "8462-4": (None, None)}
+    components = resource.get("component", [])
+    if not isinstance(components, list):
+        raise ValueError("Observation.component is not a list")
+    for component in components:
+        if not isinstance(component, dict):
+            raise ValueError("Observation component is not an object")
+        system, code, _ = first_coding(component.get("code"), "http://loinc.org")
+        quantity = component.get("valueQuantity") or {}
+        if system == "http://loinc.org" and code in values:
+            if not isinstance(quantity, dict):
+                raise ValueError("Component valueQuantity is not an object")
+            if values[code][0] is not None:
+                raise ValueError(f"Duplicate blood-pressure component {code}")
+            values[code] = (quantity.get("value"), quantity.get("unit") or quantity.get("code"))
+    return (*values["8480-6"], *values["8462-4"])
 
 
 def get_observation_date(resource):
@@ -205,7 +235,7 @@ def insert_condition(
         )
 
     system, code, display = first_coding(
-        resource.get("code")
+        resource.get("code"), "http://snomed.info/sct"
     )
 
     cursor.execute(
@@ -218,12 +248,13 @@ def insert_condition(
             code,
             display,
             clinical_status,
+            verification_status,
             onset_at,
             abatement_at
         )
         VALUES (
             %s, %s, %s, %s, %s,
-            %s, %s, %s, %s
+            %s, %s, %s, %s, %s
         )
         ON CONFLICT (run_id, condition_id) DO NOTHING
         """,
@@ -235,6 +266,7 @@ def insert_condition(
             code,
             display,
             get_status(resource),
+            get_verification_status(resource),
             resource.get("onsetDateTime"),
             resource.get("abatementDateTime"),
         ),
@@ -261,7 +293,7 @@ def insert_observation(
     )
 
     system, code, display = first_coding(
-        resource.get("code")
+        resource.get("code"), "http://loinc.org"
     )
 
     value_quantity = resource.get("valueQuantity", {})
@@ -282,11 +314,16 @@ def insert_observation(
             observed_at,
             numeric_value,
             text_value,
-            unit
+            unit,
+            systolic_value,
+            systolic_unit,
+            diastolic_value,
+            diastolic_unit
         )
         VALUES (
             %s, %s, %s, %s, %s, %s,
-            %s, %s, %s, %s, %s
+            %s, %s, %s, %s, %s,
+            %s, %s, %s, %s
         )
         ON CONFLICT (run_id, observation_id)
         DO NOTHING
@@ -303,6 +340,7 @@ def insert_observation(
             value_quantity.get("value"),
             get_text_value(resource),
             value_quantity.get("unit"),
+            *get_blood_pressure(resource),
         ),
     )
 
@@ -316,12 +354,12 @@ def load_bundle(
     with file_path.open(encoding="utf-8") as file:
         bundle = json.load(file)
 
-    if bundle.get("resourceType") != "Bundle":
+    if not isinstance(bundle, dict) or bundle.get("resourceType") != "Bundle":
         raise ValueError(
             f"{file_path.name} is not a FHIR Bundle"
         )
 
-    entries = bundle.get("entry", [])
+    entries = bundle.get("entry")
 
     if not isinstance(entries, list):
         raise ValueError(
@@ -424,6 +462,8 @@ def print_counts(cursor, run_id):
 
 
 def load_dataset(directory):
+    if not DATABASE_URL:
+        raise ValueError("DATABASE_URL is missing; configure the project .env")
     files = get_json_files(directory)
 
     if not files:

@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS conditions (
     code TEXT,
     display TEXT,
     clinical_status TEXT,
+    verification_status TEXT,
     onset_at TIMESTAMPTZ,
     abatement_at TIMESTAMPTZ,
 
@@ -67,6 +68,10 @@ CREATE TABLE IF NOT EXISTS observations (
     numeric_value NUMERIC,
     text_value TEXT,
     unit TEXT,
+    systolic_value NUMERIC,
+    systolic_unit TEXT,
+    diastolic_value NUMERIC,
+    diastolic_unit TEXT,
 
     PRIMARY KEY (run_id, observation_id),
 

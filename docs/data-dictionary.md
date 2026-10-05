@@ -110,6 +110,7 @@ Contains normalized FHIR Condition resources.
 | `code` | TEXT | Yes | Condition code |
 | `display` | TEXT | Yes | Human-readable condition name |
 | `clinical_status` | TEXT | Yes | Active, inactive, resolved or another status |
+| `verification_status` | TEXT | Yes | FHIR verification status; entered-in-error records are excluded |
 | `onset_at` | TIMESTAMPTZ | Yes | Condition onset time |
 | `abatement_at` | TIMESTAMPTZ | Yes | Condition resolution time |
 
@@ -127,7 +128,9 @@ Each condition must reference a patient with the same `run_id`.
 - Conditions must be matched using both `code_system` and `code`.
 - Display text must not be used as the primary matching method.
 - Missing onset dates do not automatically exclude a condition.
-- Conditions marked `inactive`, `resolved` or `entered-in-error` are not active.
+- Conditions with verification status `entered-in-error` are excluded.
+- Inactive/resolved conditions are excluded unless a recorded abatement date
+  places their resolution after the selected historical analysis date.
 - Abated conditions are not active after their abatement time.
 
 ---
@@ -149,6 +152,10 @@ Contains normalized FHIR Observation resources.
 | `numeric_value` | NUMERIC | Yes | Numeric result |
 | `text_value` | TEXT | Yes | Text or coded result |
 | `unit` | TEXT | Yes | Measurement unit |
+| `systolic_value` | NUMERIC | Yes | LOINC 8480-6 component of a BP panel |
+| `systolic_unit` | TEXT | Yes | Systolic component unit |
+| `diastolic_value` | NUMERIC | Yes | LOINC 8462-4 component of a BP panel |
+| `diastolic_unit` | TEXT | Yes | Diastolic component unit |
 
 ### Primary key
 
@@ -165,6 +172,9 @@ Each observation must reference a patient with the same `run_id`.
 - Display text must not be used as the primary matching method.
 - Date-based queries must require a non-null `observed_at`.
 - Numeric values must be interpreted with their units.
+- BP panels have no top-level numeric value. Use their systolic/diastolic
+  columns, not `numeric_value`, for threshold queries. Standalone systolic or
+  diastolic observations still use `numeric_value` and `unit`.
 - Unit conversion is not supported in version one.
 - Missing observations mean only that no matching record exists in the
   imported dataset.

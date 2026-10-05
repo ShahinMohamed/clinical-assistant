@@ -1,0 +1,29 @@
+version: 2
+corpus: who-diabetes-pages-v1
+cases:
+  - id: evidence_001
+    question: What domains does WHO use to monitor diabetes prevention and control?
+    answerable: true
+    expected_sections: [who-diabetes-monitoring-2024/page-22]
+    required_topics: [health system determinants, service delivery, risk factors, outcomes and impacts]
+  - id: evidence_002
+    question: What does HEARTS-D say about monitoring glycaemic control and blood pressure?
+    answerable: true
+    expected_sections: [who-hearts-d-2020/page-17]
+    required_topics: [HbA1c, blood pressure]
+    required_caveat: Attribute the recommendations to the 2020 document.
+  - id: evidence_003
+    question: How is availability of HbA1c testing defined for facility monitoring?
+    answerable: true
+    expected_sections: [who-ncd-monitoring-2022/page-39, who-diabetes-monitoring-2024/page-41]
+    required_topics: [numerator, denominator, testing availability]
+  - id: evidence_004
+    question: Which indicators cover blood pressure control and hypertension treatment among people with diabetes?
+    answerable: true
+    expected_sections: [who-diabetes-monitoring-2024/page-70, who-ncd-monitoring-2022/page-45]
+    required_topics: [diabetes, hypertension, indicator definitions]
+  - id: evidence_005
+    question: What are the results of a 2026 randomized trial of a new experimental diabetes drug?
+    answerable: false
+    expected_sections: []
+    expected_behavior: State that the seed corpus does not contain evidence answering this question.
