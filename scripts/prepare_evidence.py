@@ -69,7 +69,6 @@ def prepare_source(pdf):
     with pymupdf.open(pdf) as fallback:
         extracted = [extract_page(page, fallback[index]) for index, page in enumerate(reader.pages)]
     pages = [text for text, _ in extracted]
-    text = "\f".join(pages)
 
     # Remove only frequently repeated first/last lines, not repeated body text.
     edge_counts = {}
@@ -132,8 +131,6 @@ def prepare_source(pdf):
 
     output = PROCESSED / f"{source_id}.json"
     output.write_text(json.dumps(records, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    # Complete extraction is retained separately for checking excluded pages.
-    (PROCESSED / f"{source_id}.txt").write_text(text, encoding="utf-8")
     return {
         "source_id": source_id,
         "sections": len(records),

@@ -12,7 +12,7 @@ current national guidance or patient-specific clinical advice.
 - Seed citation details live in `SOURCE_DETAILS` in the script: title,
   organizational author, publisher, publication date, canonical WHO URL and
   global geographic scope. Unknown PDFs need citation details before indexing.
-- Keep original PDFs and full extracted TXT files. JSON contains individual
+- Keep original PDFs and processed JSON files. JSON contains individual
   physical PDF pages suitable for later chunking, not curated sections.
 - Use pip-installed pypdf in plain mode, with PyMuPDF fallback for empty pages
   or undecodable characters. Poppler is not required by this script.
@@ -40,7 +40,7 @@ current national guidance or patient-specific clinical advice.
 Passing the character check does not guarantee correct table, image, flowchart
 or reading-order interpretation. OCR is not implemented. Inspect empty and
 excluded pages before relying on their content. The source PDF remains
-authoritative, especially for numerical tables. TXT is for inspection, not indexing.
+authoritative, especially for numerical tables. 
 
 ## Dependency deployment note
 
