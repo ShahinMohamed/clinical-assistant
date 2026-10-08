@@ -10,7 +10,8 @@ from time import perf_counter
 
 import yaml
 
-from rag.evidence_common import ROOT, get_store, get_tokenizer, retrieve
+from rag.evidence_common import ROOT, get_store, get_tokenizer
+from safety.checks import check_input, guardrail_settings
 from rag.rerank import get_reranker, reranker_settings
 from scripts.evidence.evaluation_common import (
     SEEDS,
@@ -162,6 +163,7 @@ def evaluate(args):
         )
 
     pipeline = build_pipeline(store, **options)
+    baseline_pipeline = build_pipeline(store)
 
     results = []
     baseline_candidate_hits = []
@@ -177,7 +179,11 @@ def evaluate(args):
                     "positive retrieval metrics."
                 ),
             }
-            if options["web"]:
+            checked_input = check_input(case["question"])
+            if not checked_input["allowed"]:
+                result["status"] = "guardrail_refused"
+                result["guardrails"] = {"enabled": True, "input": checked_input}
+            elif options["web"]:
                 result["reason"] = (
                     "Local negative references do not establish "
                     "unanswerability on the live web."
@@ -186,13 +192,17 @@ def evaluate(args):
             elif options["crag"]:
                 started = perf_counter()
                 state = pipeline(case["question"])
-
-                result["crag_negative"] = {
-                    "abstained": state["crag"]["abstained"],
-                    "query_seconds": perf_counter() - started,
-                    "trace": state["crag"],
-                    "retrieval_steps": state["retrieval_steps"],
-                }
+                seconds = perf_counter() - started
+                result["guardrails"] = state["guardrails"]
+                if state["blocked"]:
+                    result["status"] = "guardrail_refused"
+                else:
+                    result["crag_negative"] = {
+                        "abstained": state["crag"]["abstained"],
+                        "query_seconds": seconds,
+                        "trace": state["crag"],
+                        "retrieval_steps": state["retrieval_steps"],
+                    }
 
             results.append(result)
             continue
@@ -207,13 +217,8 @@ def evaluate(args):
         # Baseline is ALWAYS plain hybrid, regardless of flags.
         started = perf_counter()
 
-        candidates = retrieve(
-            store,
-            case["question"],
-            top_k=20,
-            hyde=False,
-            rerank=False,
-        )
+        baseline_state = baseline_pipeline(case["question"])
+        candidates = baseline_state["candidates"]
 
         baseline_seconds = perf_counter() - started
 
@@ -230,14 +235,16 @@ def evaluate(args):
         )
 
         baseline = score_documents(
-            candidates[:5],
+            baseline_state["documents"],
             expected,
         )
         baseline["query_seconds"] = baseline_seconds
+        baseline["guardrails"] = baseline_state["guardrails"]
+        baseline["request_blocked"] = baseline_state["blocked"]
 
         result = {
             "id": case["id"],
-            "question": case["question"],
+            "question": baseline_state["question"],
             "expected_sections": sorted(expected),
             "candidate_count": len(candidates),
             "candidate_hit_at_20": baseline_candidate_hit,
@@ -261,7 +268,7 @@ def evaluate(args):
 
             selected_seconds = perf_counter() - started
 
-            if reuse_baseline:
+            if reuse_baseline and not state["blocked"]:
                 selected_seconds += baseline_seconds
 
             selected = score_documents(
@@ -271,6 +278,8 @@ def evaluate(args):
             selected["query_seconds"] = selected_seconds
             selected["trace"] = state["crag"]
             selected["retrieval_steps"] = state["retrieval_steps"]
+            selected["guardrails"] = state["guardrails"]
+            selected["request_blocked"] = state["blocked"]
 
             # CRAG can retrieve twice. This checks whether an expected
             # page was available in ANY attempt's candidate pool.
@@ -358,7 +367,7 @@ def evaluate(args):
 
     report = {
         "generated_at": now(),
-        "protocol": "graph-hybrid-baseline-live-web-v3",
+        "protocol": "graph-hybrid-baseline-always-on-guardrails-v4",
         "dataset": str(args.questions),
         "dataset_sha256": hashlib.sha256(
             dataset_bytes
@@ -377,6 +386,17 @@ def evaluate(args):
         "variant": variant_name(options),
         "features": options,
         "feature_settings": feature_settings,
+        "guardrails": {
+            **guardrail_settings(),
+            "applied_to": "Both plain hybrid and selected variant",
+            "answer_checks_evaluated": False,
+        },
+        "answerable_guardrail_refusal_percent": (
+            100 * sum(
+                result["selected"]["request_blocked"]
+                for result in results if "selected" in result
+            ) / checked
+        ),
 
         "retrieval_settings": {
             "candidate_k_per_attempt": 20,
@@ -393,7 +413,8 @@ def evaluate(args):
         },
 
         "timing": (
-            "Baseline fetches 20 plain-hybrid candidates and scores five. "
+            "Baseline runs the guarded plain-hybrid graph, fetches 20 "
+            "candidates and scores five. Both variants use input guards. "
             "Selected timing includes all enabled feature work. "
             "Reused initial retrieval time is added exactly once. "
             "Model loading and final answer generation are excluded."
@@ -427,7 +448,7 @@ def evaluate(args):
                         row["abstained"]
                         for row in crag_positive
                     )
-                    / len(crag_positive)
+                    / len(crag_positive) if crag_positive else None
                 ),
                 "correction_triggered_percent": (
                     100
@@ -435,7 +456,7 @@ def evaluate(args):
                         row["attempts"] > 1
                         for row in crag_positive
                     )
-                    / len(crag_positive)
+                    / len(crag_positive) if crag_positive else None
                 ),
                 "negative_cases": len(crag_negative),
                 "negative_case_abstention_percent": (

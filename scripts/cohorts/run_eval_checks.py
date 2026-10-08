@@ -10,7 +10,7 @@ from time import perf_counter
 
 import yaml
 
-from cohort.sql_agent import (
+from cohorts.sql_agent import (
     agent_settings,
     build_sql_agent,
     get_dataset,

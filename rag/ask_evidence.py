@@ -2,7 +2,6 @@
 
 import argparse
 import json
-import re
 
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
@@ -51,42 +50,31 @@ def format_docs(documents):
 
 def package_result(state):
     answer = state["answer"].strip()
+    checks = state["guardrails"]
 
     sources = [
         {
-            "citation_number": number,
             **document.metadata,
+            "citation_number": number,
             "excerpt": document.page_content,
         }
         for number, document in enumerate(state["documents"], start=1)
     ]
 
-    if answer.startswith("INSUFFICIENT_EVIDENCE:"):
+    if state["blocked"]:
+        status = "refused"
+    elif not checks["output"]["allowed"]:
+        status = "guardrail_blocked"
+    elif answer.startswith("INSUFFICIENT_EVIDENCE:"):
         status = "insufficient_evidence"
-
     else:
-        citations = {
-            int(number)
-            for number in re.findall(r"\[(\d+)\]", answer)
-        }
-
-        # Citation identifier checks are not medical fact verification.
-        if not citations or any(
-            number < 1 or number > len(sources)
-            for number in citations
-        ):
-            status = "citation_check_failed"
-            answer = (
-                "The answer failed the citation-format check. "
-                "Review the retrieved sources."
-            )
-        else:
-            status = "generated"
+        status = "generated"
 
     return {
         "status": status,
         "answer": answer,
         "sources": sources,
+        "guardrails": checks,
         "crag": state["crag"],
         "retrieval_steps": state["retrieval_steps"],
     }
@@ -186,6 +174,8 @@ def main():
         print(json.dumps(
             {
                 "retrieval_variant": variant_name(options),
+                "request_blocked": state["blocked"],
+                "guardrails": state["guardrails"],
                 "crag": state["crag"],
                 "retrieval_steps": state["retrieval_steps"],
             },

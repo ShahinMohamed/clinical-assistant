@@ -10,14 +10,12 @@ from pathlib import Path
 import psycopg
 from dotenv import load_dotenv
 from langchain_core.documents import Document
-from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_postgres import PGEngine, PGVectorStore
 from langchain_postgres.v2.hybrid_search_config import (
     HybridSearchConfig,
     reciprocal_rank_fusion,
 )
 from sqlalchemy.engine import make_url
-from transformers import AutoTokenizer
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -59,6 +57,9 @@ def database_url():
 
 @lru_cache(maxsize=1)
 def get_tokenizer():
+    # Rejected requests and offline guardrail tests do not need model imports.
+    from transformers import AutoTokenizer
+
     return AutoTokenizer.from_pretrained(
         MODEL_NAME,
         revision=MODEL_REVISION,
@@ -68,6 +69,8 @@ def get_tokenizer():
 
 @lru_cache(maxsize=1)
 def get_embeddings():
+    from langchain_huggingface import HuggingFaceEmbeddings
+
     return HuggingFaceEmbeddings(
         model_name=MODEL_NAME,
         model_kwargs={

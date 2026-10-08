@@ -18,6 +18,8 @@ from pydantic import BaseModel
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import make_url
 
+from safety.checks import check_answer_text, check_input, guardrail_settings
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DOMAIN_FILE = ROOT / "docs/cohort-definitions.md"
@@ -111,6 +113,10 @@ class State(TypedDict, total=False):
     generate_answer: bool
     answer: str
     answer_error: str
+    blocked: bool
+    guardrail_results: dict
+    requested_run_id: int | None
+    expected_fingerprint: str | None
 
 
 def required(name):
@@ -177,6 +183,7 @@ def agent_settings():
         ).hexdigest(),
         "temperature": "provider_default",
         "clinical_validation": False,
+        "guardrails": guardrail_settings(),
     }
 
 
@@ -434,6 +441,58 @@ def build_sql_agent():
 
     # ---------- Graph nodes ----------
 
+    def input_guard_node(state):
+        checked = check_input(state["question"])
+        return {
+            "blocked": not checked["allowed"],
+            "guardrail_results": {
+                **state["guardrail_results"],
+                "input": checked,
+            },
+        }
+
+    def dataset_node(state):
+        return {
+            "dataset": get_dataset(
+                engine,
+                date.fromisoformat(state["analysis_date"]),
+                state["requested_run_id"],
+                state["expected_fingerprint"],
+            ),
+        }
+
+    def output_guard_node(state):
+        # Validate explanations, not SQL equivalence or numeric correctness.
+        refusal = not state["draft"]["supported"]
+        explanation = (
+            state["draft"]["reason"] if refusal else state.get("answer")
+        )
+        if explanation is None:
+            return {}
+
+        checked = check_answer_text(explanation)
+        update = {
+            "guardrail_results": {
+                **state["guardrail_results"],
+                "output": checked,
+            },
+        }
+        if not checked["allowed"]:
+            if refusal:
+                update["draft"] = {
+                    **state["draft"],
+                    "reason": "This request could not be supported by the available synthetic data.",
+                }
+            else:
+                update["answer"] = (
+                    "The generated explanation was withheld. "
+                    "Review the returned synthetic database results."
+                )
+        return update
+
+    def route_input_guard(state):
+        return "blocked" if state["blocked"] else "allowed"
+
     def context(state):
         return (
             f"Question: {state['question']}\n"
@@ -571,6 +630,9 @@ def build_sql_agent():
         return "answer"
 
     graph = StateGraph(State)
+    graph.add_node("guard_input", input_guard_node)
+    graph.add_node("dataset", dataset_node)
+    graph.add_node("guard_output", output_guard_node)
     graph.add_node("list_tables", list_tables_node)
     graph.add_node("schema", schema_node)
     graph.add_node("generate", generate_node)
@@ -578,7 +640,13 @@ def build_sql_agent():
     graph.add_node("execute", execute_node)
     graph.add_node("answer", answer_node)
 
-    graph.add_edge(START, "list_tables")
+    graph.add_edge(START, "guard_input")
+    graph.add_conditional_edges(
+        "guard_input",
+        route_input_guard,
+        {"blocked": END, "allowed": "dataset"},
+    )
+    graph.add_edge("dataset", "list_tables")
     graph.add_edge("list_tables", "schema")
     graph.add_edge("schema", "generate")
 
@@ -600,7 +668,8 @@ def build_sql_agent():
         {"generate": "generate", "answer": "answer"},
     )
 
-    graph.add_edge("answer", END)
+    graph.add_edge("answer", "guard_output")
+    graph.add_edge("guard_output", END)
 
     compiled = graph.compile()
 
@@ -615,9 +684,6 @@ def build_sql_agent():
         if not isinstance(question, str) or not question.strip():
             raise ValueError("Question cannot be empty.")
 
-        if len(question) > 2000:
-            raise ValueError("Question exceeds 2000 characters.")
-
         selected_date = (
             datetime.now(UTC).date()
             if analysis_date is None
@@ -629,18 +695,18 @@ def build_sql_agent():
         ):
             raise ValueError("run_id must be a positive integer.")
 
-        dataset = get_dataset(
-            engine,
-            selected_date,
-            run_id,
-            expected_fingerprint,
-        )
-
         state = compiled.invoke(
             {
                 "question": question.strip(),
                 "analysis_date": selected_date.isoformat(),
-                "dataset": dataset,
+                "requested_run_id": run_id,
+                "expected_fingerprint": expected_fingerprint,
+                "blocked": False,
+                "guardrail_results": {
+                    "enabled": True,
+                    "input": None,
+                    "output": None,
+                },
                 "attempts": 0,
                 "history": [],
                 "generate_answer": generate_answer,
@@ -648,6 +714,21 @@ def build_sql_agent():
             config={"recursion_limit": 20},
         )
 
+        if state["blocked"]:
+            return {
+                "status": "refused",
+                "reason": state["guardrail_results"]["input"]["reason"],
+                "synthetic": True,
+                "research_only": True,
+                "analysis_date": selected_date.isoformat(),
+                "count": None,
+                "sql": None,
+                "rows": [],
+                "attempts": 0,
+                "guardrails": state["guardrail_results"],
+            }
+
+        dataset = state["dataset"]
         output = {
             "question": question.strip(),
             "synthetic": True,
@@ -660,6 +741,7 @@ def build_sql_agent():
             ).hexdigest(),
             "history": state["history"],
             "count": None,
+            "guardrails": state["guardrail_results"],
         }
 
         if not state["draft"]["supported"]:

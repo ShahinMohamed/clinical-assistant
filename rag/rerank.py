@@ -3,7 +3,6 @@
 import math
 from functools import lru_cache
 
-from sentence_transformers import CrossEncoder
 
 
 MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L6-v2"
@@ -25,6 +24,8 @@ def reranker_settings():
 
 @lru_cache(maxsize=1)
 def get_reranker():
+    from sentence_transformers import CrossEncoder
+
     return CrossEncoder(
         MODEL_NAME,
         revision=MODEL_REVISION,

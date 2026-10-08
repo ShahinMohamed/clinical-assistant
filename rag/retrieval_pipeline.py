@@ -6,6 +6,8 @@ from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langgraph.graph import END, START, StateGraph
 
+from safety.checks import check_evidence_output, check_input, decision
+
 from rag.evidence_common import (
     QUERY_PREFIX,
     get_embeddings,
@@ -44,6 +46,8 @@ class State(TypedDict, total=False):
     web_used: bool
     web_error: str | None
     answer: str
+    blocked: bool
+    guardrail_results: dict
 
 
 def add_feature_arguments(parser):
@@ -118,6 +122,44 @@ def build_pipeline(
         get_hyde_chain()
 
     # ---------- Graph nodes ----------
+
+    def input_guard_node(state):
+        checked = check_input(state["question"])
+
+        if checked["allowed"]:
+            tokens = get_tokenizer().encode(
+                QUERY_PREFIX + state["question"], truncation=False
+            )
+            if len(tokens) > 512:
+                checked = decision(
+                    False, "embedding_limit", "Question exceeds the embedding limit."
+                )
+
+        update = {
+            "blocked": not checked["allowed"],
+            "guardrail_results": {
+                **state["guardrail_results"],
+                "input": checked,
+            },
+        }
+        if not checked["allowed"]:
+            update["answer"] = f"REQUEST_REFUSED: {checked['reason']}"
+        return update
+
+    def output_guard_node(state):
+        checked = check_evidence_output(state["answer"], len(state["documents"]))
+        update = {
+            "guardrail_results": {
+                **state["guardrail_results"],
+                "output": checked,
+            },
+        }
+        if not checked["allowed"]:
+            update["answer"] = (
+                "The generated answer was withheld because it failed a guardrail "
+                "check. Review the source excerpts."
+            )
+        return update
 
     def hyde_node(state):
         from rag.hyde import generate_hypothesis
@@ -382,6 +424,8 @@ def build_pipeline(
     # ---------- Conditional routing ----------
 
     def route_start(state):
+        if state["blocked"]:
+            return "blocked"
         return "hyde" if hyde else "retrieve_local"
 
     def route_candidates(state):
@@ -404,6 +448,7 @@ def build_pipeline(
     graph = StateGraph(State)
 
     nodes = {
+        "guard_input": input_guard_node,
         "hyde": hyde_node,
         "retrieve_local": retrieve_local_node,
         "retrieve_web": retrieve_web_node,
@@ -418,10 +463,11 @@ def build_pipeline(
     for name, function in nodes.items():
         graph.add_node(name, function)
 
+    graph.add_edge(START, "guard_input")
     graph.add_conditional_edges(
-        START,
+        "guard_input",
         route_start,
-        {"hyde": "hyde", "retrieve_local": "retrieve_local"},
+        {"blocked": END, "hyde": "hyde", "retrieve_local": "retrieve_local"},
     )
 
     graph.add_edge("hyde", "retrieve_local")
@@ -452,8 +498,10 @@ def build_pipeline(
 
     if answer_fn is not None:
         graph.add_node("generate", generate_node)
+        graph.add_node("guard_output", output_guard_node)
         graph.add_edge("finish", "generate")
-        graph.add_edge("generate", END)
+        graph.add_edge("generate", "guard_output")
+        graph.add_edge("guard_output", END)
     else:
         graph.add_edge("finish", END)
 
@@ -465,17 +513,15 @@ def build_pipeline(
 
         question = question.strip()
 
-        tokens = get_tokenizer().encode(
-            QUERY_PREFIX + question,
-            truncation=False,
-        )
-
-        if len(tokens) > 512:
-            raise ValueError("Question exceeds the embedding limit.")
-
         state = compiled.invoke(
             {
                 "question": question,
+                "blocked": False,
+                "guardrail_results": {
+                    "enabled": True,
+                    "input": None,
+                    "output": None,
+                },
                 "hypothesis": None,
                 "initial_candidates": initial_candidates,
                 "candidates": [],
@@ -497,14 +543,17 @@ def build_pipeline(
 
         trace = None
 
-        if crag:
+        if crag and not state["blocked"]:
             from rag.crag import crag_trace
 
             trace = crag_trace(state)
 
         result = {
-            "question": question,
+            "question": None if state["blocked"] else question,
             "documents": state["documents"],
+            "candidates": state["candidates"],
+            "blocked": state["blocked"],
+            "guardrails": state["guardrail_results"],
             "retrieval_steps": state["retrieval_steps"],
             "crag": trace,
         }

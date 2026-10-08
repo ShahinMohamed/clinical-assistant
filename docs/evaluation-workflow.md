@@ -1,31 +1,21 @@
 # Evaluation workflow
 
-The cohort runner is a regression check, not an LLM evaluation or independent
-clinical validation. It compares reference SQL results with a saved baseline.
+The cohort runner compares Text2SQL patient counts with freshly executed reference
+SQL for the same saved ingestion run and explicit analysis date. It does not
+validate clinical correctness, full SQL equivalence, or generated explanations.
 
 ```bash
-# Normal check: never modifies the saved reference file.
-python -m scripts.cohorts.run_eval_checks
-
-# First reference, only if no reference file exists.
-python -m scripts.cohorts.run_eval_checks --generate-reference --analysis-date 2026-10-04
-
-# Explicit refresh after reviewing changed data, definitions or SQL.
-# The previous reference is copied to reports/reference-backups first.
-python -m scripts.cohorts.run_eval_checks --refresh-reference --analysis-date 2026-10-04
-
+# Never modifies the saved questions or overwrites an existing report.
+python -m scripts.cohorts.run_eval_checks --evaluate-text2sql --analysis-date 2026-10-04 --text2sql-report reports/text2sql-v1.json
 ```
 
-- Checks use the baseline's ingestion run and fixed analysis date. New patient
-  imports do not silently change existing expected answers.
-- Generation uses the latest completed run. No sample row totals are hardcoded.
-- Raw distinct resource IDs must reconcile with normalized table counts.
-- Failed data-quality checks never create or replace a baseline.
-- Baselines record dataset fingerprint and SQL checksum. Generation is labeled
-  `reference_generated`, not `verified`.
-- Every cohort result warns when the dataset is stale, including adult counts.
-- Cohort question IDs and text are defined in `scripts/cohorts/run_eval_checks.py`;
-  the saved reference is `evals/cohort-ground-truth.yaml`.
+- Questions and ingestion-run identity come from `evals/cohort-ground-truth.yaml`.
+  SQL blocks with matching case IDs come from `db/eval_queries.sql`.
+- The selected date applies to both reference SQL and Text2SQL. Saved YAML expected
+  counts are ignored. New patient imports do not silently switch the saved run.
+- Dataset fingerprints and report checksums identify the comparison context.
+- Reference SQL defines the target; its 100% agreement is not independent validation.
+- Completed cohort results warn when the dataset is stale, including adult counts.
 - Evidence loading validates citation metadata and extraction character quality.
   Retrieval cases are defined in `evals/evidence-questions.yaml`; the runner
   checks whether expected pages occur among the top five retrieved chunks.
@@ -36,7 +26,9 @@ python -m scripts.cohorts.run_eval_checks --refresh-reference --analysis-date 20
 ## Evidence retrieval
 
 Run from the project root with the dependencies installed and an existing
-evidence index. These checks do not call Gemini or modify the database.
+evidence index. Plain hybrid and reranking do not call Gemini. HyDE and CRAG do;
+`--web` additionally permits live external search. Retrieval checks do not modify
+the index or generate final answers.
 
 ```bash
 python -m scripts.evidence.evaluate_retrieval
@@ -70,3 +62,23 @@ The report includes paired metric changes and timing. Evaluation keeps the
 existing corpus-checksum and dataset-checksum checks; no benchmark is regenerated
 as a side effect of evaluation. A completed run exits successfully even when
 retrieval misses occur; inspect metrics rather than treating exit status as accuracy.
+
+## Always-on guardrails
+
+Both the plain-hybrid baseline and selected retrieval graph use the same input
+checks. There is no `--guardrails` argument. Refused answerable cases count as
+misses rather than disappearing from the denominator. Reports include guardrail
+settings and refusal percentages. A guardrail refusal is not a CRAG abstention.
+The v4 graph baseline includes input-check/graph overhead; do not attribute timing
+differences from older v3 reports solely to retrieval-feature improvements.
+
+```bash
+python -m scripts.evaluate_guardrails
+python -m unittest discover -s tests -v
+```
+
+The separate rule report uses 16 handcrafted English input/output examples with
+policy-defined expected outcomes. Its percentages apply only to those examples,
+not arbitrary attacks, complete sensitive-data detection, or clinical safety.
+The graph tests mock external services and local models. Live database, retrieval,
+and Gemini evaluations still require the normal project environment.

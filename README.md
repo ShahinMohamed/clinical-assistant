@@ -7,6 +7,9 @@ load real patient records into this prototype.
 ## Current layout
 
 - `rag/`: runtime retrieval helpers, reranking and evidence chat.
+- `cohorts/`: schema-aware synthetic-cohort Text2SQL graph.
+- `safety/`: shared always-on input and answer checks.
+- `tests/`: offline guardrail and graph regression tests.
 - `scripts/evidence/`: PDF preparation, indexing, question generation and retrieval evaluation.
 - `scripts/cohorts/`: synthetic FHIR profiling, ingestion and cohort checks.
 - `db/`: synthetic-cohort schema and reference SQL.
@@ -37,7 +40,8 @@ GEMINI_API_KEY=your_key
 GEMINI_MODEL=your_available_model_id
 ```
 
-Gemini settings are needed for generated answers and evaluation-question generation.
+Gemini settings are needed for generated answers, Text2SQL, HyDE, CRAG,
+and evaluation-question generation.
 Indexing and retrieval checks use local models; the first run downloads them.
 Answer generation sends questions and retrieved evidence excerpts to Google;
 question generation sends selected evidence pages.
@@ -49,12 +53,13 @@ Replace `/path/to/synthea-fhir` with your synthetic FHIR directory.
 ```bash
 python -m scripts.cohorts.profile_fhir /path/to/synthea-fhir
 python -m scripts.cohorts.load_fhir /path/to/synthea-fhir
-python -m scripts.cohorts.run_eval_checks
+python -m scripts.cohorts.run_eval_checks --evaluate-text2sql --analysis-date 2026-10-04
+python -m cohorts.sql_agent "How many synthetic patients are in the dataset?" --analysis-date 2026-10-04
 ```
 
-The cohort check compares with the existing fixed-date baseline; it does not
-replace it. See [evaluation workflow](docs/evaluation-workflow.md) for initial
-generation and explicit refresh commands.
+The cohort check compares Text2SQL patient counts with freshly executed reference
+SQL for the same saved ingestion run and explicit analysis date. It does not
+rewrite the question dataset or use its saved expected counts.
 
 ## Evidence tools
 
@@ -71,9 +76,9 @@ python -m rag.ask_evidence
 ```
 
 Indexing reads manifest-listed processed JSON, not the PDFs again. It combines
-vector and PostgreSQL full-text retrieval using reciprocal rank fusion. It does
-not include Text2SQL routing or corrective loops. Add `--rerank` to the chat command
-to enable the optional local cross-encoder reranker.
+vector and PostgreSQL full-text retrieval using reciprocal rank fusion. The graph
+supports optional `--hyde`, `--rerank`, and `--crag`; `--web` requires `--crag`.
+Text2SQL is still a separate command, not automatically routed from evidence chat.
 
 Unchanged indexing inputs are skipped. `python -m scripts.evidence.index_evidence --force`
 builds another index deliberately. New indexes activate only after indexing and
@@ -82,7 +87,35 @@ consume storage. Restart a running chat after reindexing to use the new index.
 
 Answers return source excerpts and citation metadata. Citation-format checks
 do not prove clinical accuracy or that every claim is supported. Cohort counts
-come from reference SQL, not the evidence chat.
+come from the separate Text2SQL graph, not the evidence chat.
+
+## Always-on guardrails
+
+Evidence and cohort graphs run deterministic input checks automatically. There
+is no `--guardrails` flag or opt-out. Common instruction overrides, pasted record
+markers, contact details, patient-list requests, and personal medication requests
+are refused before retrieval or SQL generation. Cohort refusals also skip the
+dataset lookup. Generated evidence answers undergo citation-identifier and
+personal-directive checks; cohort explanations undergo personal-directive checks.
+Failed explanation checks withhold the text without changing database results.
+
+These small English-language heuristics can miss violations and falsely refuse
+valid questions. They do not verify medical facts, prove citation support,
+identify all sensitive data, certify synthetic records, or replace SQL controls.
+
+```bash
+# Offline rule report: no database or model/API calls.
+python -m scripts.evaluate_guardrails
+
+# Offline graph tests with mocked retrieval, database, and model calls.
+python -m unittest discover -s tests -v
+```
+
+Retrieval evaluation applies the same input guards to both plain-hybrid baseline
+and selected variants. Guardrail refusals are separate from CRAG abstentions;
+refused answerable cases remain in retrieval metrics as misses. Retrieval-only
+evaluation does not test generated answers. Older v3 timing reports use a different
+baseline boundary, so use the new paired v4 reports for timing comparisons.
 
 Question generation is separate from evaluation:
 
