@@ -177,8 +177,13 @@ def evaluate(args):
                     "positive retrieval metrics."
                 ),
             }
+            if options["web"]:
+                result["reason"] = (
+                    "Local negative references do not establish "
+                    "unanswerability on the live web."
+                )
 
-            if options["crag"]:
+            elif options["crag"]:
                 started = perf_counter()
                 state = pipeline(case["question"])
 
@@ -322,7 +327,21 @@ def evaluate(args):
     if options["crag"]:
         from rag.crag import crag_settings
 
-        feature_settings["crag"] = crag_settings()
+        feature_settings["crag"] = crag_settings(
+            web=options["web"],
+        )
+        if options["web"]:
+            from rag.web_evidence import web_settings
+
+            feature_settings["web"] = {
+                **web_settings(),
+                "chunk_size": 350,
+                "chunk_overlap": 50,
+                "max_chunks_per_source": 80,
+                "candidate_k": 20,
+                "final_k": 5,
+                "candidate_ranking": "embedding_similarity",
+            }
 
     packages = [
         "langchain-core",
@@ -331,13 +350,15 @@ def evaluate(args):
         "transformers",
         "torch",
         "langchain-google-genai",
+        "langgraph"
     ]
-    if options["crag"]:
-        packages.append("langgraph")
+
+    if options["web"]:
+        packages.extend(["httpx", "trafilatura"])
 
     report = {
         "generated_at": now(),
-        "protocol": "composable-hybrid-baseline-v1",
+        "protocol": "graph-hybrid-baseline-live-web-v3",
         "dataset": str(args.questions),
         "dataset_sha256": hashlib.sha256(
             dataset_bytes
@@ -434,6 +455,15 @@ def evaluate(args):
 
         "passed": current_metrics["hit_at_5_percent"] == 100,
         "cases": results,
+        "medical_fact_verification": False,
+        "evaluation_scope": (
+            "Expected local-page retrieval, not final-answer correctness."
+        ),
+        "live_web_repeatability": (
+            "Not guaranteed: search results and source content can change."
+            if options["web"]
+            else "Not applicable."
+        ),
     }
 
     report_path = args.report or (
@@ -486,6 +516,11 @@ def main():
     add_feature_arguments(parser)
 
     args = parser.parse_args()
+    
+    options = feature_options(args)
+    if options["web"] and not options["crag"]:
+        parser.error("--web requires --crag.")
+
     args.questions = args.questions.resolve()
 
     if args.report is not None:

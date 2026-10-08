@@ -12,3 +12,5 @@ sentence-transformers
 transformers
 sqlalchemy
 langgraph
+httpx
+trafilatura
