@@ -76,13 +76,14 @@ def package_result(state):
     }
 
 
-def build_chain(store, rerank=False):
+def build_chain(store, rerank=False, hyde=False):
     retriever = RunnableLambda(
         lambda question: retrieve(
             store,
             question,
             top_k=5,
             rerank=rerank,
+            hyde=hyde,
         )
     )
 
@@ -164,12 +165,23 @@ def main():
     parser.add_argument(
         "--retrieve-only",
         action="store_true",
-        help="Show passages without calling Gemini.",
+        help=(
+            "Show retrieved passages without answer generation. "
+            "--hyde still calls Gemini for the search passage."
+        ),
     )
     parser.add_argument(
         "--rerank",
         action="store_true",
         help="Rerank hybrid-search candidates before answering.",
+    )
+    parser.add_argument(
+        "--hyde",
+        action="store_true",
+        help=(
+            "Generate a hypothetical passage for vector retrieval. "
+            "Calls Gemini even with --retrieve-only."
+        ),
     )
     args = parser.parse_args()
 
@@ -183,18 +195,28 @@ def main():
             store,
             args.question,
             rerank=args.rerank,
+            hyde=args.hyde
         )
         print(format_docs(documents))
         return
 
-    chain = build_chain(store, rerank=args.rerank)
+    chain = build_chain(
+        store,
+        rerank=args.rerank,
+        hyde=args.hyde,
+    )
 
     def answer_question(question):
         result = chain.invoke(question)
         result["index_table"] = configuration["table_name"]
-        result["retrieval_variant"] = (
-            "hybrid_rerank" if args.rerank else "hybrid"
-        )
+
+        variant = "hybrid"
+        if args.hyde:
+            variant += "_hyde"
+        if args.rerank:
+            variant += "_rerank"
+        result["retrieval_variant"] = variant
+
         print(json.dumps(result, indent=2, ensure_ascii=False))
 
     if args.question:

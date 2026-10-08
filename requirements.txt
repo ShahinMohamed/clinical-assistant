@@ -11,3 +11,4 @@ langchain-google-genai
 sentence-transformers
 transformers
 sqlalchemy
+langgraph

@@ -258,7 +258,6 @@ def get_store():
     store = create_store(engine, configuration["table_name"])
     return store, configuration
 
-
 def retrieve(
     store,
     question,
@@ -266,6 +265,8 @@ def retrieve(
     *,
     rerank=False,
     candidate_k=20,
+    hyde=False,
+    hypothetical_text=None,
 ):
     question = question.strip()
 
@@ -276,33 +277,70 @@ def retrieve(
         raise ValueError("top_k must be between 1 and 20.")
 
     if rerank and not top_k <= candidate_k <= 20:
-        raise ValueError("candidate_k must be between top_k and 20.")
+        raise ValueError(
+            "candidate_k must be between top_k and 20."
+        )
+
+    if hypothetical_text is not None and not hyde:
+        raise ValueError(
+            "hypothetical_text requires hyde=True."
+        )
 
     tokens = get_tokenizer().encode(
         QUERY_PREFIX + question,
         truncation=False,
     )
+
     if len(tokens) > 512:
-        raise ValueError("Question is too long for the embedding model.")
+        raise ValueError(
+            "Question is too long for the embedding model."
+        )
 
     fetch_k = candidate_k if rerank else top_k
 
     config = hybrid_config()
+
+    # Keyword search always uses the real question.
     config.fts_query = question
     config.fusion_function_parameters["fetch_top_k"] = fetch_k
 
-    documents = store.similarity_search(
-        question,
-        k=fetch_k,
-        hybrid_search_config=config,
-    )
+    if hyde:
+        from rag.hyde import (
+            generate_hypothesis,
+            validate_hypothesis,
+        )
+
+        passage = (
+            generate_hypothesis(question)
+            if hypothetical_text is None
+            else validate_hypothesis(hypothetical_text)
+        )
+
+        # HyDE embeds an answer-like document, not a short query.
+        # Existing document settings use no query instruction prefix.
+        embedding = get_embeddings().embed_documents(
+            [passage]
+        )[0]
+
+        documents = store.similarity_search_by_vector(
+            embedding,
+            k=fetch_k,
+            hybrid_search_config=config,
+        )
+
+    else:
+        documents = store.similarity_search(
+            question,
+            k=fetch_k,
+            hybrid_search_config=config,
+        )
 
     if not rerank:
         return documents[:top_k]
 
-    # Lazy import: normal retrieval does not initialize the reranker.
     from rag.rerank import rerank_documents
 
+    # Rerank against the original question, not the hypothesis.
     return rerank_documents(
         question,
         documents,
