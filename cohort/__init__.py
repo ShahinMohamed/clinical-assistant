@@ -1,0 +1,1 @@
+"""Synthetic patient cohort analysis."""

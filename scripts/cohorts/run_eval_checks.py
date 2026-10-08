@@ -1,608 +1,383 @@
+"""Compare executed reference SQL with Text2SQL patient counts."""
+
 import argparse
 import hashlib
-import os
+import json
 import re
-import shutil
 from datetime import UTC, date, datetime
 from pathlib import Path
-from dotenv import load_dotenv
+from time import perf_counter
 
-import psycopg
 import yaml
-from psycopg.rows import dict_row
+
+from cohort.sql_agent import (
+    agent_settings,
+    build_sql_agent,
+    get_dataset,
+    get_engine,
+)
+
 
 ROOT = Path(__file__).resolve().parents[2]
-load_dotenv(ROOT / ".env")
-DATABASE_URL = os.getenv("DATABASE_URL")
 
-QUERY_FILE = ROOT / "db/eval_queries.sql"
-EVAL_OUTPUT = ROOT / "evals/cohort-ground-truth.yaml"
-REPORT_OUTPUT = ROOT / "reports/data-quality.md"
-
-
-ANALYSIS_DATE = "2026-10-04"
-FRESHNESS_THRESHOLD_DAYS = 7
-
-
-QUESTIONS = {
-    "cohort_001": "How many synthetic patients are in the dataset?",
-    "cohort_002": "How many synthetic patients are adults?",
-    "cohort_003": "How many synthetic adults have active type 2 diabetes?",
-    "cohort_004": "How many synthetic adults have active hypertension?",
-    "cohort_005": (
-        "How many synthetic adults have both type 2 diabetes "
-        "and hypertension?"
-    ),
-    "cohort_006": (
-        "How many synthetic patients have at least one dated "
-        "HbA1c observation?"
-    ),
-    "cohort_007": (
-        "How many synthetic adults with type 2 diabetes have an "
-        "HbA1c observation in the last 12 months?"
-    ),
-    "cohort_008": (
-        "How many synthetic adults with type 2 diabetes have no "
-        "HbA1c observation in the last 12 months?"
-    ),
-    "cohort_009": (
-        "How many synthetic adults with type 2 diabetes and "
-        "hypertension have no HbA1c observation in the last "
-        "12 months?"
-    ),
-    "cohort_010": (
-        "How many synthetic patients have no birth date?"
-    ),
-}
-
-
-REQUIRED_NON_EMPTY = [
-    "raw_resources",
-    "patients",
-    "conditions",
-    "observations",
-    "type_2_diabetes_conditions",
-    "hba1c_observations",
-    "blood_pressure_observations",
-]
-
-
-ZERO_REQUIRED = [
-    "orphan_conditions",
-    "orphan_observations",
-    "conditions_missing_codes",
-    "observations_missing_codes",
-    "hba1c_missing_dates",
-    "hba1c_missing_units",
-    "observations_before_birth",
-    "onset_after_abatement",
-    "bp_panels_missing_components",
-]
+QUESTIONS_FILE = ROOT / "evals/cohort-ground-truth.yaml"
+SQL_FILE = ROOT / "db/eval_queries.sql"
 
 
 def read_queries(sql_text):
-    marker = re.compile(
-        r"^-- name:\s*([a-z0-9_]+)\s*$",
-        re.MULTILINE,
+    """Read SQL blocks marked with: -- name: cohort_001"""
+
+    markers = list(
+        re.finditer(
+            r"^-- name:\s*([a-z0-9_]+)\s*$",
+            sql_text,
+            re.MULTILINE,
+        )
     )
 
-    matches = list(marker.finditer(sql_text))
     queries = {}
 
-    for index, match in enumerate(matches):
-        name = match.group(1)
-        start = match.end()
+    for index, marker in enumerate(markers):
+        name = marker.group(1)
 
-        if index + 1 < len(matches):
-            end = matches[index + 1].start()
-        else:
-            end = len(sql_text)
+        end = (
+            markers[index + 1].start()
+            if index + 1 < len(markers)
+            else len(sql_text)
+        )
 
-        query = sql_text[start:end].strip()
+        query = sql_text[marker.end():end].strip()
 
         if not query:
-            raise ValueError(
-                f"Query {name} is empty"
-            )
+            raise ValueError(f"Empty SQL query: {name}")
 
         if name in queries:
-            raise ValueError(f"Duplicate query name: {name}")
+            raise ValueError(f"Duplicate SQL query: {name}")
+
         queries[name] = query
 
     return queries
 
 
-def get_latest_run(cursor):
-    cursor.execute(
-        """
-        SELECT
-            run_id,
-            dataset_fingerprint,
-            source_name,
-            as_of_date
-        FROM ingestion_runs
-        WHERE status = 'completed'
-        ORDER BY completed_at DESC
-        LIMIT 1
-        """
-    )
+def execute_baseline(engine, sql, run_id, analysis_date):
+    """Execute reference SQL instead of using saved expected counts."""
 
-    run = cursor.fetchone()
-
-    if not run:
-        raise ValueError(
-            "No completed ingestion run was found"
-        )
-
-    return run
-
-
-def execute_queries(
-    cursor,
-    queries,
-    run_id,
-    analysis_date,
-):
     parameters = {
         "run_id": run_id,
         "analysis_date": analysis_date,
     }
 
-    results = {}
+    started = perf_counter()
 
-    for name, query in queries.items():
-        cursor.execute(query, parameters)
-        results[name] = cursor.fetchall()
+    with engine.connect() as connection:
+        # Reference queries use psycopg-style %(name)s parameters.
+        rows = connection.exec_driver_sql(
+            sql,
+            parameters,
+        ).mappings().all()
 
-    return results
+    seconds = perf_counter() - started
 
-
-def calculate_quality_status(
-    quality,
-    data_through_date,
-):
-    failures = []
-
-    for field in REQUIRED_NON_EMPTY:
-        actual = quality[field]
-
-        if actual is None or actual <= 0:
-            failures.append(
-                f"{field}: expected at least one row, "
-                f"got {actual}"
-            )
-
-    for field in ZERO_REQUIRED:
-        actual = quality[field]
-
-        if actual != 0:
-            failures.append(
-                f"{field}: expected 0, got {actual}"
-            )
-
-    for table in ("patients", "conditions", "observations"):
-        if quality[table] != quality[f"raw_{table}"]:
-            failures.append(f"{table}: normalized rows do not match distinct raw resource IDs")
-
-    if data_through_date is None:
-        failures.append(
-            "data_through_date is missing"
+    if len(rows) != 1 or "expected_count" not in rows[0]:
+        raise ValueError(
+            "Reference SQL must return one row with expected_count."
         )
 
-    return failures
+    count = rows[0]["expected_count"]
 
-
-def write_evaluation_file(
-    run,
-    analysis_date,
-    data_through_date,
-    freshness_days,
-    stale,
-    results,
-):
-    cases = []
-
-    for query_id, question in QUESTIONS.items():
-        rows = results[query_id]
-
-        if len(rows) != 1:
-            raise ValueError(
-                f"{query_id} did not return one row"
-            )
-
-        expected_count = rows[0]["expected_count"]
-
-        cases.append(
-            {
-                "id": query_id,
-                "question": question,
-                "analysis_date": analysis_date.isoformat(),
-                "expected_count": expected_count,
-                "stale_data_warning": stale,
-                "status": "reference_generated",
-            }
+    if type(count) is not int or count < 0:
+        raise ValueError(
+            "Reference SQL must return a non-negative integer count."
         )
 
-    document = {
-        "version": 1,
-        "generation_method": "reference_sql; not independent clinical validation",
-        "query_sha256": hashlib.sha256(QUERY_FILE.read_bytes()).hexdigest(),
-        "generated_at": datetime.now(UTC).isoformat(),
-        "dataset": {
-            "source": run["source_name"],
-            "synthetic": True,
-            "run_id": run["run_id"],
-            "dataset_fingerprint": (
-                run["dataset_fingerprint"]
-            ),
+    return {
+        "status": "completed",
+        "count": count,
+        "query_seconds": seconds,
+        "sql": sql,
+        "parameters": {
+            "run_id": run_id,
             "analysis_date": analysis_date.isoformat(),
-            "data_through_date": (
-                data_through_date.isoformat()
-                if data_through_date
-                else None
-            ),
-            "freshness_days": freshness_days,
         },
-        "cases": cases,
     }
 
-    EVAL_OUTPUT.parent.mkdir(
-        parents=True,
-        exist_ok=True,
+
+def calculate_improvements(baseline, current):
+    changes = {}
+
+    for metric, before in baseline.items():
+        after = current[metric]
+        difference = after - before
+        lower_is_better = metric.endswith("_seconds")
+
+        improvement = -difference if lower_is_better else difference
+
+        changes[metric] = {
+            "baseline": round(before, 4),
+            "new": round(after, 4),
+            "absolute_change": round(difference, 4),
+            "percentage_point_change": (
+                round(difference, 4)
+                if metric.endswith("_percent")
+                else None
+            ),
+            "relative_improvement_percent": (
+                round(100 * improvement / before, 2)
+                if before != 0
+                else None
+            ),
+            "direction": (
+                "lower_is_better"
+                if lower_is_better
+                else "higher_is_better"
+            ),
+        }
+
+    return changes
+
+
+def evaluate_text2sql(analysis_date, report_path):
+    question_bytes = QUESTIONS_FILE.read_bytes()
+    sql_bytes = SQL_FILE.read_bytes()
+
+    benchmark = yaml.safe_load(question_bytes)
+    cases = benchmark["cases"]
+    saved_dataset = benchmark["dataset"]
+
+    if saved_dataset.get("synthetic") is not True:
+        raise ValueError("Evaluation requires a synthetic dataset.")
+
+    if not cases:
+        raise ValueError("No evaluation questions found.")
+
+    ids = [case["id"] for case in cases]
+
+    if len(ids) != len(set(ids)):
+        raise ValueError("Duplicate evaluation case IDs.")
+
+    queries = read_queries(sql_bytes.decode("utf-8"))
+
+    for case in cases:
+        if case["id"] not in queries:
+            raise ValueError(f"No reference SQL for {case['id']}.")
+
+        if not isinstance(case["question"], str):
+            raise ValueError(f"Invalid question for {case['id']}.")
+
+        if not case["question"].strip():
+            raise ValueError(f"Empty question for {case['id']}.")
+
+    report_path = Path(report_path).resolve()
+
+    if report_path.exists():
+        raise FileExistsError(
+            f"Report already exists: {report_path}. "
+            "Choose a new filename."
+        )
+
+    run_id = saved_dataset["run_id"]
+
+    if type(run_id) is not int or run_id < 1:
+        raise ValueError("Dataset run_id must be a positive integer.")
+
+    engine = get_engine()
+
+    dataset = get_dataset(
+        engine,
+        analysis_date,
+        run_id,
+        saved_dataset["dataset_fingerprint"],
     )
 
-    EVAL_OUTPUT.write_text(
-        yaml.safe_dump(
-            document,
-            sort_keys=False,
-            allow_unicode=True,
+    fingerprint = dataset["dataset_fingerprint"]
+
+    # Run every reference first. A broken baseline stops evaluation.
+    baselines = {
+        case["id"]: execute_baseline(
+            engine,
+            queries[case["id"]],
+            run_id,
+            analysis_date,
+        )
+        for case in cases
+    }
+
+    # The agent receives neither reference SQL nor reference counts.
+    agent = build_sql_agent()
+    results = []
+
+    for case in cases:
+        baseline = baselines[case["id"]]
+        started = perf_counter()
+
+        try:
+            result = agent(
+                case["question"],
+                analysis_date=analysis_date.isoformat(),
+                run_id=run_id,
+                expected_fingerprint=fingerprint,
+                generate_answer=False,
+            )
+
+        except Exception as error:
+            result = {
+                "status": "error",
+                "count": None,
+                "error_type": type(error).__name__,
+            }
+
+        seconds = perf_counter() - started
+        actual_count = result.get("count")
+
+        same_context = (
+            result.get("status") == "completed"
+            and result.get("analysis_date") == analysis_date.isoformat()
+            and result.get("dataset", {}).get("run_id") == run_id
+            and result.get("dataset", {}).get(
+                "dataset_fingerprint"
+            ) == fingerprint
+        )
+
+        matched = (
+            same_context
+            and type(actual_count) is int
+            and actual_count == baseline["count"]
+            and not result.get("truncated", False)
+        )
+
+        results.append({
+            "id": case["id"],
+            "question": case["question"],
+            "baseline": baseline,
+            "text2sql": {
+                **result,
+                "query_seconds": seconds,
+            },
+            "same_context": same_context,
+            "result_matches_baseline": matched,
+            "count_difference": (
+                actual_count - baseline["count"]
+                if type(actual_count) is int
+                else None
+            ),
+            "passed": matched,
+        })
+
+        print(
+            f"{case['id']}: "
+            f"SQL={baseline['count']}, "
+            f"Text2SQL={actual_count}, "
+            f"{'PASS' if matched else 'FAIL'}"
+        )
+
+    total = len(results)
+
+    baseline_metrics = {
+        "query_success_percent": 100.0,
+        "result_match_percent": 100.0,
+        "mean_query_seconds": (
+            sum(item["baseline"]["query_seconds"] for item in results)
+            / total
         ),
-        encoding="utf-8",
-    )
+    }
 
-
-def write_report(
-    run,
-    analysis_date,
-    data_through_date,
-    freshness_days,
-    freshness_threshold,
-    stale,
-    quality,
-    status_rows,
-    unit_rows,
-    failures,
-):
-    overall_status = (
-        "PASS" if not failures else "FAIL"
-    )
-
-    lines = [
-        "# Data-Quality Report",
-        "",
-        f"- Status: **{overall_status}**",
-        f"- Generated at: {datetime.now(UTC).isoformat()}",
-        f"- Ingestion run: `{run['run_id']}`",
-        (
-            "- Dataset fingerprint: "
-            f"`{run['dataset_fingerprint']}`"
+    current_metrics = {
+        "query_success_percent": (
+            100 * sum(
+                item["text2sql"]["status"] == "completed"
+                for item in results
+            ) / total
         ),
-        f"- Analysis date: `{analysis_date}`",
-        f"- Data-through date: `{data_through_date}`",
-        f"- Freshness: `{freshness_days}` days",
-        "",
-        "## Required non-empty tables and markers",
-        "",
-        "| Check | Expected | Actual | Status |",
-        "|---|---:|---:|---|",
-    ]
+        "result_match_percent": (
+            100 * sum(item["passed"] for item in results) / total
+        ),
+        "mean_query_seconds": (
+            sum(item["text2sql"]["query_seconds"] for item in results)
+            / total
+        ),
+    }
 
-    for field in REQUIRED_NON_EMPTY:
-        actual = quality[field]
-        status = (
-            "PASS"
-            if actual is not None and actual > 0
-            else "FAIL"
-        )
+    report = {
+        "generated_at": datetime.now(UTC).isoformat(),
+        "protocol": "reference-sql-vs-text2sql-v1",
+        "analysis_date": analysis_date.isoformat(),
+        "dataset": dataset,
+        "clinical_validation": False,
+        "evaluation_scope": "Patient-count agreement with reference SQL.",
+        "saved_expected_counts_used": False,
+        "questions_sha256": hashlib.sha256(question_bytes).hexdigest(),
+        "baseline_sql_sha256": hashlib.sha256(sql_bytes).hexdigest(),
+        "settings": agent_settings(),
+        "checked_cases": total,
+        "baseline_metrics": baseline_metrics,
+        "metrics": current_metrics,
+        "improvements": calculate_improvements(
+            baseline_metrics,
+            current_metrics,
+        ),
+        "timing_note": (
+            "Baseline timing measures direct SQL execution. "
+            "Text2SQL timing includes schema retrieval, model calls, "
+            "checking, SQL execution, and any retries."
+        ),
+        "cases": results,
+    }
 
-        lines.append(
-            f"| {field} | greater than 0 | "
-            f"{actual} | {status} |"
-        )
+    report_path.parent.mkdir(parents=True, exist_ok=True)
 
-    lines.extend(
-        [
-            "",
-            "## Import reconciliation",
-            "",
-            "| Table | Distinct raw IDs | Normalized rows | Status |",
-            "|---|---:|---:|---|",
-        ]
-    )
-    for table in ("patients", "conditions", "observations"):
-        expected, actual = quality[f"raw_{table}"], quality[table]
-        lines.append(f"| {table} | {expected} | {actual} | {'PASS' if expected == actual else 'FAIL'} |")
+    with report_path.open("x", encoding="utf-8") as file:
+        json.dump(report, file, indent=2, ensure_ascii=False)
+        file.write("\n")
 
-    lines.extend(
-        [
-            "",
-            "## Required zero-value checks",
-            "",
-            "| Check | Required | Actual | Status |",
-            "|---|---:|---:|---|",
-        ]
-    )
-
-    for field in ZERO_REQUIRED:
-        actual = quality[field]
-        status = "PASS" if actual == 0 else "FAIL"
-
-        lines.append(
-            f"| {field} | 0 | {actual} | {status} |"
-        )
-
-    lines.extend(
-        [
-            "",
-            "## Other data-quality information",
-            "",
-            (
-                "- Patients missing birth date: "
-                f"`{quality['patients_missing_birth_date']}`"
-            ),
-            (
-                "- Earliest observation: "
-                f"`{quality['earliest_observation']}`"
-            ),
-            (
-                "- Latest observation: "
-                f"`{quality['latest_observation']}`"
-            ),
-            (
-                "- Observations after the analysis date: "
-                f"`{quality['observations_after_analysis_date']}`"
-            ),
-            "",
-            "## Condition statuses",
-            "",
-            "| Status | Count |",
-            "|---|---:|",
-        ]
+    print(f"\nReport: {report_path}")
+    print(
+        f"Result agreement: "
+        f"{current_metrics['result_match_percent']:.1f}%"
     )
 
-    for row in status_rows:
-        lines.append(
-            f"| {row['clinical_status']} | {row['count']} |"
-        )
-
-    lines.extend(
-        [
-            "",
-            "## HbA1c units",
-            "",
-            "| Unit | Count |",
-            "|---|---:|",
-        ]
-    )
-
-    for row in unit_rows:
-        lines.append(
-            f"| {row['unit']} | {row['count']} |"
-        )
-
-    lines.extend(
-        [
-            "",
-            "## Freshness assessment",
-            "",
-            (
-                f"- Freshness threshold: "
-                f"`{freshness_threshold}` days"
-            ),
-            f"- Dataset stale: `{'yes' if stale else 'no'}`",
-        ]
-    )
-
-    if stale:
-        lines.extend(
-            [
-                "",
-                "> This dataset is not current. Missing recent "
-                "observations may reflect delayed or discontinued "
-                "data ingestion rather than missing clinical care.",
-            ]
-        )
-
-    lines.extend(
-        [
-            "",
-            "## Failures",
-            "",
-        ]
-    )
-
-    if failures:
-        for failure in failures:
-            lines.append(f"- {failure}")
-    else:
-        lines.append("- None")
-
-    lines.extend(
-        [
-            "",
-            "## Interpretation",
-            "",
-            "- All patient records are synthetic.",
-            "- Counts are tied to the recorded analysis date.",
-            "- Missing records do not prove missing clinical care.",
-            "- Results are not real-world prevalence estimates.",
-            "",
-        ]
-    )
-
-    REPORT_OUTPUT.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    REPORT_OUTPUT.write_text(
-        "\n".join(lines),
-        encoding="utf-8",
-    )
-
-
-def compare_reference(reference, run, analysis_date, results, stale):
-    """Compare with a saved baseline. Never replace it during a check."""
-    failures = []
-    dataset = reference["dataset"]
-    if dataset["dataset_fingerprint"] != run["dataset_fingerprint"]:
-        failures.append("Reference dataset fingerprint differs from selected run")
-    if dataset["analysis_date"] != analysis_date.isoformat():
-        failures.append("Reference analysis date differs")
-    if reference.get("query_sha256") != hashlib.sha256(QUERY_FILE.read_bytes()).hexdigest():
-        failures.append("Reference SQL has changed; review before refreshing the baseline")
-    cases = {case["id"]: case for case in reference["cases"]}
-    if len(cases) != len(reference["cases"]) or cases.keys() != QUESTIONS.keys():
-        failures.append("Reference question IDs are missing, duplicated or unexpected")
-    for query_id, question in QUESTIONS.items():
-        case = cases.get(query_id)
-        if not case:
-            continue
-        if case["question"] != question:
-            failures.append(f"{query_id}: question text differs")
-        if results[query_id][0]["expected_count"] != case["expected_count"]:
-            failures.append(f"{query_id}: result differs from saved reference")
-        if case.get("stale_data_warning") != stale:
-            failures.append(f"{query_id}: stale-data warning differs")
-    return failures
+    return 0 if all(item["passed"] for item in results) else 1
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Check saved cohort references without overwriting them")
-    mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--generate-reference", action="store_true", help="Create a first reference file")
-    mode.add_argument("--refresh-reference", action="store_true", help="Back up and explicitly replace the reference")
-    parser.add_argument("--analysis-date", default=None, help="YYYY-MM-DD; defaults to saved date or 2026-10-04")
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        allow_abbrev=False,
+    )
+
+    parser.add_argument(
+        "--evaluate-text2sql",
+        action="store_true",
+        required=True,
+        help="Compare Text2SQL results against executed reference SQL.",
+    )
+
+    parser.add_argument(
+        "--analysis-date",
+        type=date.fromisoformat,
+        required=True,
+        help="Explicit evaluation date in YYYY-MM-DD format.",
+    )
+
+    parser.add_argument(
+        "--text2sql-report",
+        type=Path,
+        default=ROOT / "reports" / (
+            "text2sql-"
+            + datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+            + ".json"
+        ),
+    )
+
     args = parser.parse_args()
-    if not DATABASE_URL:
-        parser.error("DATABASE_URL is missing; configure the project .env")
-    generate = args.generate_reference or args.refresh_reference
-    if args.generate_reference and EVAL_OUTPUT.exists():
-        parser.error("Reference already exists. Use --refresh-reference only after review")
-    if not generate and not EVAL_OUTPUT.exists():
-        parser.error("No reference exists. Use --generate-reference first")
-    reference = yaml.safe_load(EVAL_OUTPUT.read_text()) if not generate else None
-    sql_text = QUERY_FILE.read_text(
-        encoding="utf-8"
-    )
 
-    selected_date = args.analysis_date or (reference["dataset"]["analysis_date"] if reference else ANALYSIS_DATE)
-    analysis_date = date.fromisoformat(selected_date)
-    freshness_threshold = FRESHNESS_THRESHOLD_DAYS
-
-    queries = read_queries(sql_text)
-
-    required_queries = {
-        "quality_summary",
-        "condition_statuses",
-        "hba1c_units",
-        *QUESTIONS.keys(),
-    }
-
-    missing_queries = required_queries - queries.keys()
-
-    if missing_queries:
-        raise ValueError(
-            "Missing queries: "
-            + ", ".join(sorted(missing_queries))
+    try:
+        return evaluate_text2sql(
+            args.analysis_date,
+            args.text2sql_report,
         )
 
-    with psycopg.connect(
-        DATABASE_URL,
-        row_factory=dict_row,
-    ) as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
-            )
-            cursor.execute("SET LOCAL TIME ZONE 'UTC'")
-            if generate:
-                run = get_latest_run(cursor)
-            else:
-                cursor.execute("""
-                    SELECT run_id, dataset_fingerprint, source_name, as_of_date
-                    FROM ingestion_runs WHERE run_id=%s AND status='completed'
-                """, (reference["dataset"]["run_id"],))
-                run = cursor.fetchone()
-                if not run:
-                    raise ValueError("The saved reference ingestion run no longer exists")
-
-            results = execute_queries(
-                cursor,
-                queries,
-                run["run_id"],
-                analysis_date,
-            )
-
-    quality = results["quality_summary"][0]
-
-    data_through_date = run["as_of_date"]
-
-    if data_through_date:
-        data_through_day = data_through_date.date()
-        freshness_days = max(
-            (analysis_date - data_through_day).days,
-            0,
-        )
-    else:
-        data_through_day = None
-        freshness_days = None
-
-    stale = (
-        freshness_days is not None
-        and freshness_days > freshness_threshold
-    )
-
-    failures = calculate_quality_status(
-        quality,
-        data_through_day,
-    )
-    if not generate:
-        failures.extend(compare_reference(reference, run, analysis_date, results, stale))
-    elif not failures:
-        if EVAL_OUTPUT.exists():
-            backup = ROOT / "reports/reference-backups" / (datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ") + ".yaml")
-            backup.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(EVAL_OUTPUT, backup)
-            print(f"Previous reference backed up to: {backup}")
-        write_evaluation_file(run, analysis_date, data_through_day, freshness_days, stale, results)
-
-    write_report(
-        run,
-        analysis_date,
-        data_through_day,
-        freshness_days,
-        freshness_threshold,
-        stale,
-        quality,
-        results["condition_statuses"],
-        results["hba1c_units"],
-        failures,
-    )
-
-    print(f"Evaluation: {EVAL_OUTPUT}")
-    print(f"Report: {REPORT_OUTPUT}")
-
-    if failures:
-        print("\nEval check failed:")
-
-        for failure in failures:
-            print(f"- {failure}")
-
-        return 1
-
-    print("\nEval check passed")
-    return 0
+    except Exception as error:
+        parser.exit(2, f"Evaluation stopped: {error}\n")
 
 
 if __name__ == "__main__":
