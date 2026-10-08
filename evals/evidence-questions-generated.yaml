@@ -1,0 +1,211 @@
+version: 1
+kind: automatically_generated
+generated_at: '2026-10-08T08:30:44.527603+00:00'
+generator_model: gemini-3.5-flash-lite
+sampling_seed: 42
+corpus_checksum: 2196ff7e2ca782e23b8eea778f4c2569553054cd00c89bfd3b2825f65d507cfe
+clinical_validation: false
+cases:
+- id: generated_5ab083056600
+  question: How is the existence of a functional referral system for diabetes management
+    validated according to the 2024 WHO guidance?
+  answerable: true
+  reference_answer: According to the 2024 WHO guidance, the existence of a clearly
+    defined, well-established functional referral system is validated by examining
+    documents that outline mechanisms for referral from primary care to secondary
+    and tertiary care, alongside feedback mechanisms from higher levels of care to
+    lower levels.
+  required_topics:
+  - Referral system
+  - Validation
+  - Primary care
+  - Secondary and tertiary care
+  expected_sections:
+  - who-diabetes-monitoring-2024/page-34
+  supporting_quotes:
+  - section_id: who-diabetes-monitoring-2024/page-34
+    quote: Existence of a clearly defined, well-established functional referral system
+      is validated by examining documents that outline mechanisms for referral from
+      primary care to secondary and tertiary care, as well as feedback mechanisms
+      from higher to lower levels of care.
+  origin: generated
+  validation: structure_and_quote_match_only
+- id: generated_c945896bb2f9
+  question: What is the recommended interval for repeated clinical breast examination-based
+    screening when a woman has no abnormal breast symptoms?
+  answerable: true
+  reference_answer: For clinical breast examination-based screening, the examination
+    should be repeated at 3-year intervals in the absence of abnormal breast symptoms.
+  required_topics:
+  - clinical breast examination-based screening
+  - repeated at 3-year intervals
+  - absence of abnormal breast symptoms
+  expected_sections:
+  - who-ncd-monitoring-2022/page-76
+  supporting_quotes:
+  - section_id: who-ncd-monitoring-2022/page-76
+    quote: For clinical breast examination-based screening, the examination should
+      be repeated at 3-year intervals in the absence of abnormal breast symptoms
+  origin: generated
+  validation: structure_and_quote_match_only
+- id: generated_10b7b53ba1c6
+  question: How is end-stage kidney disease defined in terms of glomerular filtration
+    rate for the 2024 WHO diabetes monitoring indicator?
+  answerable: true
+  reference_answer: According to the 2024 WHO diabetes monitoring guidance, end-stage
+    kidney disease is defined as a glomerular filtration rate (GFR) of less than 15
+    mL/min/1.73m2.
+  required_topics:
+  - End-stage kidney disease definition
+  - Glomerular filtration rate
+  - WHO diabetes monitoring 2024
+  expected_sections:
+  - who-diabetes-monitoring-2024/page-76
+  supporting_quotes:
+  - section_id: who-diabetes-monitoring-2024/page-76
+    quote: End-stage kidney disease is defined as a glomerular filtration rate (GFR)
+      of less than 15 mL/min/1.73m2.
+  origin: generated
+  validation: structure_and_quote_match_only
+- id: generated_d9e504e75404
+  question: What is the 2024 WHO clinical target for fasting plasma glucose when measuring
+    glycaemic control among people with diabetes?
+  answerable: true
+  reference_answer: According to the 2024 WHO guidance, the clinical target for fasting
+    plasma glucose when measuring glycaemic control is less than 126 mg/dl (7 mmol/l).
+  required_topics:
+  - glycaemic control
+  - fasting plasma glucose
+  - clinical target
+  expected_sections:
+  - who-diabetes-monitoring-2024/page-68
+  supporting_quotes:
+  - section_id: who-diabetes-monitoring-2024/page-68
+    quote: 'Clinical target: <126 mg/dl (7 mmol/l)'
+  origin: generated
+  validation: structure_and_quote_match_only
+- id: generated_34c3754440d6
+  question: How is the availability of glycated haemoglobin testing defined as an
+    indicator for diabetes monitoring in the 2024 WHO guidance?
+  answerable: true
+  reference_answer: According to the 2024 WHO guidance, the availability of glycated
+    haemoglobin (HbA1c) testing is defined as the proportion of health facilities
+    that provide diabetes services and perform HbA1c tests.
+  required_topics:
+  - Availability of glycated haemoglobin testing
+  - Definition
+  expected_sections:
+  - who-diabetes-monitoring-2024/page-41
+  supporting_quotes:
+  - section_id: who-diabetes-monitoring-2024/page-41
+    quote: Definition Proportion of health facilities that are providing diabetes
+      service and performing HbA1c test.
+  origin: generated
+  validation: structure_and_quote_match_only
+- id: generated_c0a9176f27b0
+  question: According to the 2024 WHO guidance on global monitoring for diabetes,
+    under what specific condition is the health tax indicator evaluated as 'Partially
+    yes'?
+  answerable: true
+  reference_answer: The indicator is evaluated as 'Partially yes' if the country has
+    adopted health taxes on at least one type of the specified products (such as alcoholic
+    beverages, tobacco, sugar-sweetened beverages, or foods high in saturated fats,
+    trans fats, free sugars, and/or salt), but these health taxes are not being enforced.
+  required_topics:
+  - Health taxes indicator evaluation
+  - Partially yes definition
+  - Enforcement status
+  expected_sections:
+  - who-diabetes-monitoring-2024/page-32
+  supporting_quotes:
+  - section_id: who-diabetes-monitoring-2024/page-32
+    quote: The indicator is considered “Partially yes” if the country has adopted
+      health taxes on at least one type of forementioned products, but the health
+      taxes are not being enforced.
+  origin: generated
+  validation: structure_and_quote_match_only
+- id: generated_c5bad16ee469
+  question: According to the 2022 WHO guidance on noncommunicable disease facility-based
+    monitoring, how is the indicator 'Facilities receiving supervisory visit' calculated
+    and what is its primary purpose?
+  answerable: true
+  reference_answer: According to the 2022 WHO guidance, the indicator 'Facilities
+    receiving supervisory visit' is designed to ensure continuous quality improvement
+    of clinical care and data. It is calculated by dividing the number of health facilities
+    receiving a supervisory visit in the last reporting period by the total number
+    of health facilities, and then multiplying the result by 100.
+  required_topics:
+  - Facilities receiving supervisory visit
+  - Purpose
+  - Method of calculation
+  expected_sections:
+  - who-ncd-monitoring-2022/page-116
+  supporting_quotes:
+  - section_id: who-ncd-monitoring-2022/page-116
+    quote: Purpose To ensure continuous quality improvement of clinical care and data
+  - section_id: who-ncd-monitoring-2022/page-116
+    quote: Method of calculation Numerator ÷ denominator × 100
+  origin: generated
+  validation: structure_and_quote_match_only
+- id: generated_79c5a277f13b
+  question: What kind of critical details does metadata provide for each indicator
+    according to the 2024 WHO guidance?
+  answerable: true
+  reference_answer: Metadata provides critical details for each indicator including
+    its purpose, definition, target population, estimation method, variables for disaggregation,
+    and data sources.
+  required_topics:
+  - metadata purpose
+  - indicator details
+  expected_sections:
+  - who-diabetes-monitoring-2024/page-28
+  supporting_quotes:
+  - section_id: who-diabetes-monitoring-2024/page-28
+    quote: Metadata offers critical details for each indicator, encompassing its purpose
+      and definition, target population, estimation method, variables for disaggregation,
+      and data sources.
+  origin: generated
+  validation: structure_and_quote_match_only
+- id: generated_59e84fbacfaa
+  question: According to the 2022 WHO guidance, what is the purpose of tracking the
+    availability of diabetes core medicines, and which specific medications are included?
+  answerable: true
+  reference_answer: The purpose of tracking the availability of diabetes core medicines
+    is to ensure an uninterrupted supply of essential medicines and improve patient
+    treatment adherence. The included diabetes core medicines are insulin, metformin,
+    and sulfonylurea.
+  required_topics:
+  - Availability of diabetes core medicines
+  - Purpose
+  - Diabetes core medicines list
+  expected_sections:
+  - who-ncd-monitoring-2022/page-37
+  supporting_quotes:
+  - section_id: who-ncd-monitoring-2022/page-37
+    quote: Purpose To ensure uninterrupted supply of essential medicines and thereby
+      improve patient treatment adherence
+  - section_id: who-ncd-monitoring-2022/page-37
+    quote: 'Diabetes core medicines include: • Insulin • Me tformin • Sulf onylurea'
+  origin: generated
+  validation: structure_and_quote_match_only
+- id: generated_6b90a6f6cf9b
+  question: According to the 2020 HEARTS-D protocol, what initial management steps
+    and follow-up timeline are recommended for a patient presenting with fasting or
+    random plasma glucose levels between 7 mmol/l and 18 mmol/l?
+  answerable: true
+  reference_answer: According to the 2020 HEARTS-D guidance, patients presenting with
+    an FPG between 7 mmol/l and 18 mmol/l or an RPG between 11.1 mmol/l and 18 mmol/l
+    should be counseled on diet and physical activity, and referred to a higher level
+    of care.
+  required_topics:
+  - glucose levels
+  - counseling
+  - referral
+  expected_sections:
+  - who-hearts-d-2020/page-25
+  supporting_quotes:
+  - section_id: who-hearts-d-2020/page-25
+    quote: 'FPG ≥7 mmol/l and <18 mmol/l or RPG ≥11.1 mmol/l and <18 mmol/l # Counsel
+      on diet and physical activity REFER to higher level of care'
+  origin: generated
+  validation: structure_and_quote_match_only

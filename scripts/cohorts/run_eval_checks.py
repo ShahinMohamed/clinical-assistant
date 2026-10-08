@@ -11,7 +11,7 @@ import psycopg
 import yaml
 from psycopg.rows import dict_row
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(ROOT / ".env")
 DATABASE_URL = os.getenv("DATABASE_URL")
 

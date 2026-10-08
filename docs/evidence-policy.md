@@ -5,7 +5,7 @@ current national guidance or patient-specific clinical advice.
 
 ## Preparation
 
-- Put PDFs in `data/evidence/raw` and run `scripts/prepare_evidence.py`.
+- Put PDFs in `data/evidence/raw` and run `python -m scripts.evidence.prepare_evidence`.
 - No `evidence/source-registry.yaml` is used. There is no automated license
   check. Public availability does not remove reuse obligations; deployment
   owners remain responsible for permissions and attribution.

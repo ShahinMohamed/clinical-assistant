@@ -170,7 +170,7 @@ def profile_fhir_directory(directory):
 def main():
     if len(sys.argv) != 2:
         print(
-            "Usage: python profile_fhir.py <fhir-directory>",
+            "Usage: python -m scripts.cohorts.profile_fhir <fhir-directory>",
             file=sys.stderr,
         )
         return 1

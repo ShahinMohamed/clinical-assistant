@@ -3,3 +3,11 @@ python-dotenv==1.2.4
 PyYAML==6.0.3
 pypdf==6.19.0
 PyMuPDF==1.28.2
+langchain-core
+langchain-text-splitters
+langchain-huggingface
+langchain-postgres>=0.0.14
+langchain-google-genai
+sentence-transformers
+transformers
+sqlalchemy

@@ -9,7 +9,7 @@ from pypdf import PdfReader
 import pymupdf
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 RAW = ROOT / "data/evidence/raw"
 PROCESSED = ROOT / "data/evidence/processed"
 

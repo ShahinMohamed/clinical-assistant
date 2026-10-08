@@ -8,7 +8,7 @@ from pathlib import Path
 import psycopg
 from psycopg.types.json import Jsonb
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(ROOT / ".env")
 
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -554,7 +554,7 @@ def load_dataset(directory):
 def main():
     if len(sys.argv) != 2:
         print(
-            "Usage: python3 scripts/load_fhir.py "
+            "Usage: python -m scripts.cohorts.load_fhir "
             "<FHIR-directory>",
             file=sys.stderr,
         )
