@@ -15,6 +15,12 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 
 from rag.evidence_common import get_store, required, retrieve
 
+from rag.retrieval_pipeline import (
+    add_feature_arguments,
+    build_pipeline,
+    feature_options,
+    variant_name,
+)
 
 def format_docs(documents):
     excerpts = []
@@ -73,18 +79,17 @@ def package_result(state):
         "status": status,
         "answer": answer,
         "sources": sources,
+        "crag": state.get("crag"),
+        "retrieval_steps": state.get("retrieval_steps", []),
     }
 
 
-def build_chain(store, rerank=False, hyde=False):
-    retriever = RunnableLambda(
-        lambda question: retrieve(
-            store,
-            question,
-            top_k=5,
-            rerank=rerank,
-            hyde=hyde,
-        )
+def build_chain(store, rerank=False, hyde=False, crag=False):
+    retrieval_state = build_pipeline(
+        store,
+        rerank=rerank,
+        hyde=hyde,
+        crag=crag,
     )
 
     prompt = ChatPromptTemplate.from_messages(
@@ -150,10 +155,7 @@ def build_chain(store, rerank=False, hyde=False):
     )
 
     return (
-        {
-            "documents": retriever,
-            "question": RunnablePassthrough(),
-        }
+        RunnableLambda(retrieval_state)
         | RunnablePassthrough.assign(answer=answer_chain)
         | RunnableLambda(package_result)
     )
@@ -162,28 +164,20 @@ def build_chain(store, rerank=False, hyde=False):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("question", nargs="?")
+
     parser.add_argument(
         "--retrieve-only",
         action="store_true",
         help=(
-            "Show retrieved passages without answer generation. "
-            "--hyde still calls Gemini for the search passage."
+            "Skip final answer generation. "
+            "HyDE and CRAG still call Gemini when enabled."
         ),
     )
-    parser.add_argument(
-        "--rerank",
-        action="store_true",
-        help="Rerank hybrid-search candidates before answering.",
-    )
-    parser.add_argument(
-        "--hyde",
-        action="store_true",
-        help=(
-            "Generate a hypothetical passage for vector retrieval. "
-            "Calls Gemini even with --retrieve-only."
-        ),
-    )
+
+    add_feature_arguments(parser)
+
     args = parser.parse_args()
+    options = feature_options(args)
 
     store, configuration = get_store()
 
@@ -191,33 +185,34 @@ def main():
         if not args.question:
             parser.error("--retrieve-only requires a question")
 
-        documents = retrieve(
-            store,
-            args.question,
-            rerank=args.rerank,
-            hyde=args.hyde
-        )
-        print(format_docs(documents))
+        pipeline = build_pipeline(store, **options)
+        state = pipeline(args.question)
+
+        print(json.dumps(
+            {
+                "retrieval_variant": variant_name(options),
+                "crag": state["crag"],
+                "retrieval_steps": state["retrieval_steps"],
+            },
+            indent=2,
+            ensure_ascii=False,
+        ))
+
+        print(format_docs(state["documents"]))
         return
 
-    chain = build_chain(
-        store,
-        rerank=args.rerank,
-        hyde=args.hyde,
-    )
+    chain = build_chain(store, **options)
 
     def answer_question(question):
         result = chain.invoke(question)
         result["index_table"] = configuration["table_name"]
+        result["retrieval_variant"] = variant_name(options)
 
-        variant = "hybrid"
-        if args.hyde:
-            variant += "_hyde"
-        if args.rerank:
-            variant += "_rerank"
-        result["retrieval_variant"] = variant
-
-        print(json.dumps(result, indent=2, ensure_ascii=False))
+        print(json.dumps(
+            result,
+            indent=2,
+            ensure_ascii=False,
+        ))
 
     if args.question:
         answer_question(args.question)
@@ -237,7 +232,6 @@ def main():
 
         if question:
             answer_question(question)
-
 
 if __name__ == "__main__":
     main()

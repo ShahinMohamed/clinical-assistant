@@ -11,7 +11,7 @@ from time import perf_counter
 import yaml
 
 from rag.evidence_common import ROOT, get_store, get_tokenizer, retrieve
-from rag.rerank import get_reranker, rerank_documents, reranker_settings
+from rag.rerank import get_reranker, reranker_settings
 from scripts.evidence.evaluation_common import (
     SEEDS,
     load_pages,
@@ -20,11 +20,14 @@ from scripts.evidence.evaluation_common import (
     validate_case,
 )
 
-from rag.hyde import (
-    generate_hypothesis,
-    get_hyde_chain,
-    hyde_settings,
+from rag.retrieval_pipeline import (
+    add_feature_arguments,
+    build_pipeline,
+    feature_options,
+    variant_name,
 )
+
+from rag.hyde import hyde_settings
 
 def score_documents(documents, expected):
     sections = [
@@ -120,11 +123,7 @@ def evaluate(args):
     dataset = yaml.safe_load(dataset_bytes)
     pages, checksum = load_pages()
 
-    automatically_generated = (
-        dataset.get("kind") == "automatically_generated"
-    )
-
-    if automatically_generated:
+    if dataset.get("kind") == "automatically_generated":
         if dataset["corpus_checksum"] != checksum:
             raise ValueError(
                 "Evidence changed. Generate a new benchmark version."
@@ -151,193 +150,243 @@ def evaluate(args):
     if configuration["corpus_checksum"] != checksum:
         raise ValueError("Active index and evaluation corpus differ.")
 
-    # Exclude model downloads/loading from per-question timing.
+    options = feature_options(args)
+    enabled = any(options.values())
+
     get_tokenizer()
 
-    if args.hyde:
-        get_hyde_chain()
-
-    if args.rerank:
-        model = get_reranker()
-        model.predict(
+    if options["rerank"]:
+        get_reranker().predict(
             [("warm-up", "warm-up")],
             show_progress_bar=False,
         )
 
+    pipeline = build_pipeline(store, **options)
+
     results = []
-    candidate_hits = []
+    baseline_candidate_hits = []
+    selected_candidate_hits = []
 
     for case in cases:
         if not case["answerable"]:
-            results.append({
+            result = {
                 "id": case["id"],
                 "status": "not_scored",
-                "reason": "Abstention requires answer-generation evaluation.",
-            })
+                "reason": (
+                    "Negative cases are excluded from "
+                    "positive retrieval metrics."
+                ),
+            }
+
+            if options["crag"]:
+                started = perf_counter()
+                state = pipeline(case["question"])
+
+                result["crag_negative"] = {
+                    "abstained": state["crag"]["abstained"],
+                    "query_seconds": perf_counter() - started,
+                    "trace": state["crag"],
+                    "retrieval_steps": state["retrieval_steps"],
+                }
+
+            results.append(result)
             continue
 
         expected = set(case["expected_sections"])
 
         if not expected or not expected.issubset(pages):
-            raise ValueError(f"Invalid expected pages: {case['id']}")
+            raise ValueError(
+                f"Invalid expected pages: {case['id']}"
+            )
 
-        # Both variants use exactly the same candidate pool.
+        # Baseline is ALWAYS plain hybrid, regardless of flags.
         started = perf_counter()
-        candidates = retrieve(store, case["question"], top_k=20)
-        retrieval_seconds = perf_counter() - started
 
-        candidate_sections = {
+        candidates = retrieve(
+            store,
+            case["question"],
+            top_k=20,
+            hyde=False,
+            rerank=False,
+        )
+
+        baseline_seconds = perf_counter() - started
+
+        baseline_sections = {
             document.metadata["section_id"]
             for document in candidates
         }
-        candidate_hit = bool(expected & candidate_sections)
-        candidate_hits.append(candidate_hit)
 
-        baseline = score_documents(candidates[:5], expected)
-        baseline["query_seconds"] = retrieval_seconds
+        baseline_candidate_hit = bool(
+            expected & baseline_sections
+        )
+        baseline_candidate_hits.append(
+            baseline_candidate_hit
+        )
+
+        baseline = score_documents(
+            candidates[:5],
+            expected,
+        )
+        baseline["query_seconds"] = baseline_seconds
 
         result = {
             "id": case["id"],
             "question": case["question"],
             "expected_sections": sorted(expected),
             "candidate_count": len(candidates),
-            "candidate_hit_at_20": candidate_hit,
+            "candidate_hit_at_20": baseline_candidate_hit,
             "baseline": baseline,
         }
 
-        if args.rerank:
+        if enabled:
+            # HyDE needs its own candidate retrieval.
+            # Other combinations can reuse baseline candidates,
+            # then apply reranking and/or CRAG.
+            reuse_baseline = not options["hyde"]
+
             started = perf_counter()
 
-            reranked = rerank_documents(
+            state = pipeline(
                 case["question"],
-                candidates,
-                top_k=5,
+                initial_candidates=(
+                    candidates if reuse_baseline else None
+                ),
             )
 
-            reranking_seconds = perf_counter() - started
+            selected_seconds = perf_counter() - started
 
-            scored = score_documents(reranked, expected)
-            scored["query_seconds"] = (
-                retrieval_seconds + reranking_seconds
-            )
-            scored["reranking_seconds"] = reranking_seconds
+            if reuse_baseline:
+                selected_seconds += baseline_seconds
 
-            result["reranked"] = scored
-
-        elif args.hyde:
-            started = perf_counter()
-
-            hypothesis = generate_hypothesis(
-                case["question"]
-            )
-
-            hyde_candidates = retrieve(
-                store,
-                case["question"],
-                top_k=20,
-                hyde=True,
-                hypothetical_text=hypothesis,
-            )
-
-            hyde_seconds = perf_counter() - started
-
-            hyde_sections = {
-                document.metadata["section_id"]
-                for document in hyde_candidates
-            }
-
-            scored = score_documents(
-                hyde_candidates[:5],
+            selected = score_documents(
+                state["documents"],
                 expected,
             )
+            selected["query_seconds"] = selected_seconds
+            selected["trace"] = state["crag"]
+            selected["retrieval_steps"] = state["retrieval_steps"]
 
-            scored["query_seconds"] = hyde_seconds
-            scored["candidate_count"] = len(hyde_candidates)
-            scored["candidate_hit_at_20"] = bool(
-                expected & hyde_sections
+            # CRAG can retrieve twice. This checks whether an expected
+            # page was available in ANY attempt's candidate pool.
+            selected_sections = {
+                section
+                for step in state["retrieval_steps"]
+                for section in step.get(
+                    "candidate_sections", []
+                )
+            }
+
+            selected_candidate_hits.append(
+                bool(expected & selected_sections)
             )
 
-            # Stored for reproducibility/debugging only.
-            # Never a reference answer or an evidence source.
-            scored["hypothetical_text"] = hypothesis
-            scored["hypothesis_is_evidence"] = False
+            result["selected"] = selected
 
-            result["hyde"] = scored
+        else:
+            result["selected"] = dict(baseline)
+            selected_candidate_hits.append(
+                baseline_candidate_hit
+            )
 
         results.append(result)
 
-    checked = len(candidate_hits)
+    checked = len(baseline_candidate_hits)
     if not checked:
         raise ValueError("No answerable cases were evaluated.")
 
     baseline_metrics = summarize(results, "baseline")
-    
-    current_variant = (
-        "reranked"
-        if args.rerank
-        else "hyde"
-        if args.hyde
-        else "baseline"
-    )
+    current_metrics = summarize(results, "selected")
 
-    current_metrics = summarize(
-        results,
-        current_variant,
-    )
+    crag_positive = [
+        result["selected"]["trace"]
+        for result in results
+        if "selected" in result
+        and result["selected"].get("trace") is not None
+    ]
+
+    crag_negative = [
+        result["crag_negative"]
+        for result in results
+        if "crag_negative" in result
+    ]
+
+    feature_settings = {}
+
+    if options["hyde"]:
+        feature_settings["hyde"] = hyde_settings()
+
+    if options["rerank"]:
+        feature_settings["rerank"] = reranker_settings()
+
+    if options["crag"]:
+        from rag.crag import crag_settings
+
+        feature_settings["crag"] = crag_settings()
+
+    packages = [
+        "langchain-core",
+        "langchain-postgres",
+        "sentence-transformers",
+        "transformers",
+        "torch",
+        "langchain-google-genai",
+    ]
+    if options["crag"]:
+        packages.append("langgraph")
 
     report = {
         "generated_at": now(),
-        "protocol": (
-            "phase8-hyde-v1"
-            if args.hyde
-            else "phase7-shared-candidates-v1"
-        ),
+        "protocol": "composable-hybrid-baseline-v1",
         "dataset": str(args.questions),
-        "dataset_sha256": hashlib.sha256(dataset_bytes).hexdigest(),
-        "reference_type": dataset.get("kind", "seed_references"),
+        "dataset_sha256": hashlib.sha256(
+            dataset_bytes
+        ).hexdigest(),
+        "reference_type": dataset.get(
+            "kind", "seed_references"
+        ),
         "clinical_validation": False,
         "index": configuration,
+
+        "baseline_variant": "hybrid",
+        "baseline_features": {
+            name: False
+            for name in options
+        },
+        "variant": variant_name(options),
+        "features": options,
+        "feature_settings": feature_settings,
+
         "retrieval_settings": {
-            "candidate_k": 20,
+            "candidate_k_per_attempt": 20,
             "final_k": 5,
             "semantic_candidates": 20,
             "keyword_candidates": 20,
             "fusion": "reciprocal_rank_fusion",
             "rrf_k": 60,
         },
-        "variant": (
-            "hybrid_hyde"
-            if args.hyde
-            else "hybrid_rerank"
-            if args.rerank
-            else "hybrid"
-        ),
-        "reranker": reranker_settings() if args.rerank else None,
+
         "environment": {
             package: version(package)
-            for package in [
-                "langchain-core",
-                "langchain-postgres",
-                "sentence-transformers",
-                "transformers",
-                "torch",
-            ]
+            for package in packages
         },
+
         "timing": (
-            "Local models loaded before measurement; "
-            "HyDE timing includes hypothetical-passage generation, "
-            "embedding and database retrieval. "
-            "Answer generation is excluded."
-            if args.hyde
-            else (
-                "Warm-model retrieval plus optional local reranking; "
-                "excludes model loading and answer generation."
-            )
+            "Baseline fetches 20 plain-hybrid candidates and scores five. "
+            "Selected timing includes all enabled feature work. "
+            "Reused initial retrieval time is added exactly once. "
+            "Model loading and final answer generation are excluded."
         ),
+
         "checked_cases": checked,
-        "candidate_hit_at_20_percent": (
-            100 * sum(candidate_hits) / checked
+
+        "baseline_candidate_hit_at_20_percent": (
+            100 * sum(baseline_candidate_hits) / checked
         ),
+        "selected_candidate_hit_at_20_any_attempt_percent": (
+            100 * sum(selected_candidate_hits) / checked
+        ),
+
         "baseline_metrics": baseline_metrics,
         "metrics": current_metrics,
         "improvements": (
@@ -345,88 +394,104 @@ def evaluate(args):
                 baseline_metrics,
                 current_metrics,
             )
-            if args.rerank or args.hyde
+            if enabled
             else None
         ),
+
+        "crag_decisions": (
+            {
+                "answerable_case_abstention_percent": (
+                    100
+                    * sum(
+                        row["abstained"]
+                        for row in crag_positive
+                    )
+                    / len(crag_positive)
+                ),
+                "correction_triggered_percent": (
+                    100
+                    * sum(
+                        row["attempts"] > 1
+                        for row in crag_positive
+                    )
+                    / len(crag_positive)
+                ),
+                "negative_cases": len(crag_negative),
+                "negative_case_abstention_percent": (
+                    100
+                    * sum(
+                        row["abstained"]
+                        for row in crag_negative
+                    )
+                    / len(crag_negative)
+                    if crag_negative
+                    else None
+                ),
+            }
+            if options["crag"]
+            else None
+        ),
+
         "passed": current_metrics["hit_at_5_percent"] == 100,
         "cases": results,
-        "hyde": (
-            hyde_settings()
-            if args.hyde
-            else None
-        ),
-        # Existing candidate_hit_at_20_percent describes
-        # the original hybrid candidate pool.
-        "hyde_candidate_hit_at_20_percent": (
-            100
-            * sum(
-                result["hyde"]["candidate_hit_at_20"]
-                for result in results
-                if "hyde" in result
-            )
-            / checked
-            if args.hyde
-            else None
-        ),
     }
 
     report_path = args.report or (
         ROOT
         / "reports"
-        / f"retrieval-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S%fZ')}.json"
+        / (
+            f"{variant_name(options)}-"
+            f"{datetime.now(UTC).strftime('%Y%m%dT%H%M%S%fZ')}"
+            ".json"
+        )
     )
-    report_path.parent.mkdir(parents=True, exist_ok=True)
+
+    report_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
     with report_path.open("x", encoding="utf-8") as file:
-        json.dump(report, file, indent=2, ensure_ascii=False)
+        json.dump(
+            report,
+            file,
+            indent=2,
+            ensure_ascii=False,
+        )
         file.write("\n")
 
-    print("Baseline:")
+    print("Plain hybrid baseline:")
     print(json.dumps(baseline_metrics, indent=2))
 
-    if args.rerank or args.hyde:
-        print(f"\nVariant: {report['variant']}")
-        print(json.dumps(current_metrics, indent=2))
+    print(f"\nSelected: {report['variant']}")
+    print(json.dumps(current_metrics, indent=2))
 
-        print("\nChanges:")
-        print(json.dumps(
-            report["improvements"],
-            indent=2,
-    ))
+    if enabled:
+        print("\nChanges against plain hybrid:")
+        print(json.dumps(report["improvements"], indent=2))
 
     print(f"\nReport: {report_path}")
-
-    # A completed benchmark is not required to score 100%.
-    # Actual execution/validation errors still raise exceptions.
     return 0
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--questions", type=Path, default=SEEDS)
+    parser.add_argument(
+        "--questions",
+        type=Path,
+        default=SEEDS,
+    )
     parser.add_argument("--report", type=Path)
-    
-    feature = parser.add_mutually_exclusive_group()
-    feature.add_argument(
-        "--rerank",
-        action="store_true",
-        help="Compare hybrid search with reranking.",
-    )
-    feature.add_argument(
-        "--hyde",
-        action="store_true",
-        help=(
-            "Compare hybrid search with HyDE-assisted hybrid search. "
-            "Calls Gemini once per answerable case, excluding retries."
-        ),
-    )
-    
+
+    add_feature_arguments(parser)
+
     args = parser.parse_args()
     args.questions = args.questions.resolve()
+
     if args.report is not None:
         args.report = args.report.resolve()
-    return evaluate(args)
 
+    return evaluate(args)
 
 if __name__ == "__main__":
     raise SystemExit(main())
