@@ -4,7 +4,6 @@ import argparse
 import hashlib
 import json
 import os
-import re
 from datetime import UTC, date, datetime
 from functools import lru_cache
 from pathlib import Path
@@ -15,10 +14,12 @@ from langchain_core.tools import tool
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.engine import make_url
 
+from assistant.tracing import traced_node
 from safety.checks import check_answer_text, check_input, guardrail_settings
+from safety.sql import COHORT_TABLES, validate_cohort_sql
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -139,20 +140,24 @@ def get_engine():
     if url.get_backend_name() != "postgresql":
         raise ValueError("DATABASE_URL must point to PostgreSQL.")
 
-    return create_engine(
+    engine = create_engine(
         url.set(drivername="postgresql+psycopg"),
         pool_pre_ping=True,
+        pool_size=1,
+        max_overflow=1,
         isolation_level="REPEATABLE READ",
-        connect_args={
-            "connect_timeout": 5,
-            "options": (
-                "-c default_transaction_read_only=on "
-                "-c statement_timeout=5000 "
-                "-c lock_timeout=1000 "
-                "-c timezone=UTC"
-            ),
-        },
+        connect_args={"connect_timeout": 5},
     )
+
+    @event.listens_for(engine, "begin")
+    def read_only_transaction(connection):
+        # Transaction-local settings also work through Neon's pooled endpoint.
+        connection.exec_driver_sql("SET TRANSACTION READ ONLY")
+        connection.exec_driver_sql("SET LOCAL statement_timeout = '5s'")
+        connection.exec_driver_sql("SET LOCAL lock_timeout = '1s'")
+        connection.exec_driver_sql("SET LOCAL timezone = 'UTC'")
+
+    return engine
 
 
 @lru_cache(maxsize=1)
@@ -248,7 +253,7 @@ def get_dataset(engine, analysis_date, run_id, expected_fingerprint):
     }
 
 
-def build_sql_agent():
+def build_sql_agent(*, on_step=None):
     engine = get_engine()
     model = get_model()
     domain = DOMAIN_FILE.read_text(encoding="utf-8")
@@ -283,7 +288,7 @@ def build_sql_agent():
                 ORDER BY table_name
             """))
 
-            return [row[0] for row in rows]
+            return [row[0] for row in rows if row[0] in COHORT_TABLES]
 
     @tool
     def sql_db_schema(
@@ -380,12 +385,7 @@ def build_sql_agent():
         try:
             query = query.strip().rstrip(";").strip()
 
-            # Minimal prototype checks, not a full SQL validator.
-            if not re.match(r"^(SELECT|WITH)\b", query, re.IGNORECASE):
-                raise ValueError("Only SELECT queries or SELECT CTEs are allowed.")
-
-            if ";" in query:
-                raise ValueError("Provide one SQL statement.")
+            validate_cohort_sql(query)
 
             statement = text(query)
             names = set(statement.compile().params)
@@ -630,15 +630,21 @@ def build_sql_agent():
         return "answer"
 
     graph = StateGraph(State)
-    graph.add_node("guard_input", input_guard_node)
-    graph.add_node("dataset", dataset_node)
-    graph.add_node("guard_output", output_guard_node)
-    graph.add_node("list_tables", list_tables_node)
-    graph.add_node("schema", schema_node)
-    graph.add_node("generate", generate_node)
-    graph.add_node("check", check_node)
-    graph.add_node("execute", execute_node)
-    graph.add_node("answer", answer_node)
+    nodes = {
+        "guard_input": ("Cohort input check", input_guard_node),
+        "dataset": ("Synthetic dataset selection", dataset_node),
+        "guard_output": ("Cohort answer check", output_guard_node),
+        "list_tables": ("Available database tables", list_tables_node),
+        "schema": ("Live schema inspection", schema_node),
+        "generate": ("SQL query generation", generate_node),
+        "check": ("SQL query validation", check_node),
+        "execute": ("Read-only SQL execution", execute_node),
+        "answer": ("Synthetic cohort explanation", answer_node),
+    }
+    for name, (title, function) in nodes.items():
+        graph.add_node(name, traced_node(
+            on_step, f"cohort.{name}", title, function,
+        ))
 
     graph.add_edge(START, "guard_input")
     graph.add_conditional_edges(

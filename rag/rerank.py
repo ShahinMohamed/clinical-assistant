@@ -2,6 +2,7 @@
 
 import math
 from functools import lru_cache
+from rag.model_files import model_location
 
 
 
@@ -27,7 +28,7 @@ def get_reranker():
     from sentence_transformers import CrossEncoder
 
     return CrossEncoder(
-        MODEL_NAME,
+        model_location(MODEL_NAME, "reranker"),
         revision=MODEL_REVISION,
         device="cpu",
         max_length=MAX_LENGTH,

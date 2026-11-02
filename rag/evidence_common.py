@@ -16,6 +16,7 @@ from langchain_postgres.v2.hybrid_search_config import (
     reciprocal_rank_fusion,
 )
 from sqlalchemy.engine import make_url
+from rag.model_files import model_location
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -61,7 +62,7 @@ def get_tokenizer():
     from transformers import AutoTokenizer
 
     return AutoTokenizer.from_pretrained(
-        MODEL_NAME,
+        model_location(MODEL_NAME, "embedding"),
         revision=MODEL_REVISION,
         trust_remote_code=False,
     )
@@ -72,7 +73,7 @@ def get_embeddings():
     from langchain_huggingface import HuggingFaceEmbeddings
 
     return HuggingFaceEmbeddings(
-        model_name=MODEL_NAME,
+        model_name=model_location(MODEL_NAME, "embedding"),
         model_kwargs={
             "device": "cpu",
             "revision": MODEL_REVISION,
@@ -196,13 +197,18 @@ def hybrid_config():
     )
 
 
+@lru_cache(maxsize=1)
 def create_engine():
     # PGEngine expects a SQLAlchemy-style connection URL.
     url = make_url(database_url()).set(
         drivername="postgresql+psycopg"
     )
     return PGEngine.from_connection_string(
-        url=url.render_as_string(hide_password=False)
+        url=url.render_as_string(hide_password=False),
+        pool_size=1,
+        max_overflow=1,
+        pool_pre_ping=True,
+        pool_recycle=300,
     )
 
 

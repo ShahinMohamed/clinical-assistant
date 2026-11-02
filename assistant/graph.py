@@ -6,6 +6,7 @@ from typing import Literal, TypedDict
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel
 
+from assistant.tracing import traced_node
 from safety.checks import check_answer_text, check_input
 
 
@@ -70,7 +71,7 @@ For other routes, leave clarification empty.
 """.strip()
 
 
-def build_assistant(*, hyde=False, rerank=False, crag=False, web=False):
+def build_assistant(*, hyde=False, rerank=False, crag=False, web=False, on_step=None):
     if web and not crag:
         raise ValueError("--web requires --crag.")
 
@@ -178,7 +179,7 @@ def build_assistant(*, hyde=False, rerank=False, crag=False, web=False):
             if cohort_agent is None:
                 from cohorts.sql_agent import build_sql_agent
 
-                cohort_agent = build_sql_agent()
+                cohort_agent = build_sql_agent(on_step=on_step)
 
             result = cohort_agent(
                 question,
@@ -217,6 +218,7 @@ def build_assistant(*, hyde=False, rerank=False, crag=False, web=False):
                     rerank=rerank,
                     crag=crag,
                     web=web,
+                    on_step=on_step,
                 )
 
                 # Assign only after initialization succeeds.
@@ -268,8 +270,12 @@ def build_assistant(*, hyde=False, rerank=False, crag=False, web=False):
 
     graph = StateGraph(State)
 
-    graph.add_node("guard_input", guard_input)
-    graph.add_node("route", route)
+    graph.add_node("guard_input", traced_node(
+        on_step, "assistant.guard_input", "Input safety check", guard_input,
+    ))
+    graph.add_node("route", traced_node(
+        on_step, "assistant.route", "Question routing", route,
+    ))
     graph.add_node("cohort", cohort)
     graph.add_node("evidence", evidence)
 

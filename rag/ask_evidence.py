@@ -87,6 +87,7 @@ def build_chain(
     rerank=False,
     crag=False,
     web=False,
+    on_step=None,
 ):
     prompt = ChatPromptTemplate.from_messages([
         (
@@ -142,6 +143,7 @@ def build_chain(
         crag=crag,
         web=web,
         answer_fn=generation.invoke,
+        on_step=on_step,
     )
 
     return RunnableLambda(pipeline) | RunnableLambda(package_result)

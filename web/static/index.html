@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="A local research workbench for traceable clinical evidence and synthetic patient cohort analysis.">
+  <meta name="theme-color" content="#176c57">
+  <title>Clinical Assistant</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <svg class="icon-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 3 10 5-10 5L2 8l10-5Zm-10 9 10 5 10-5M2 16l10 5 10-5"/></symbol>
+    <symbol id="i-spark" viewBox="0 0 24 24"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5L12 3ZM20 2v4m-2-2h4"/></symbol>
+    <symbol id="i-rank" viewBox="0 0 24 24"><path d="M4 6h12M4 12h9M4 18h6m7-3 3 3 3-3m-3 3V7"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6l-8-3Z"/><path d="m8.5 11.5 2.5 2.5 4.5-5"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 5v2"/></symbol>
+    <symbol id="i-book" viewBox="0 0 24 24"><path d="M12 5C8 2 3 3 3 3v16s5-1 9 2c4-3 9-2 9-2V3s-5-1-9 2Zm0 0v16M6 7h3m6 0h3M6 11h3m6 0h3"/></symbol>
+    <symbol id="i-database" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 4 16 4 16 0V5M4 12c0 4 16 4 16 0"/></symbol>
+    <symbol id="i-flow" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/><path d="M10 6h5a3 3 0 0 1 3 3v5M6 10v5a3 3 0 0 0 3 3h5"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V3H3v13h5"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.5"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+    <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 3h7v7m0-7L10 14M10 3H3v18h18v-7"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h5m4 0h7M4 17h9m4 0h3"/><circle cx="11" cy="7" r="2"/><circle cx="15" cy="17" r="2"/></symbol>
+  </svg>
+
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Research pipeline configuration">
+      <a class="brand" href="/" aria-label="Evidence Lab home"><img src="/favicon.svg" alt="" width="36" height="36"><span>Clinical<span class="brand-light">Assistant</span><small>RESEARCH WORKBENCH</small></span></a>
+      <button class="workspace-nav" id="new-research"><svg class="icon"><use href="#i-plus"/></svg> New research</button>
+
+      <div class="sidebar-section-heading"><span>YOUR PIPELINE</span><span class="small-label" id="feature-count">0 optional</span></div>
+      <p class="sidebar-description">Choose how your question finds its answer.</p>
+      <fieldset class="feature-list" id="feature-list">
+        <legend class="sr-only">Optional evidence retrieval features</legend>
+        <div class="feature-card feature-baseline"><div class="feature-card-top"><span class="feature-icon"><svg class="icon"><use href="#i-layers"/></svg></span><span class="feature-title">Hybrid retrieval</span><svg class="icon locked-icon" aria-label="Always enabled"><use href="#i-lock"/></svg></div><p>Vector search + keyword matching.</p><span class="always-on">Always on for evidence</span></div>
+        <label class="feature-card"><span class="feature-card-top"><span class="feature-icon"><svg class="icon"><use href="#i-spark"/></svg></span><span class="feature-title">HyDE</span><input type="checkbox" name="hyde" aria-label="HyDE" aria-describedby="hyde-description"></span><span class="feature-description" id="hyde-description">Expand your query with a hypothetical passage.</span><span class="feature-kind">QUERY EXPANSION</span></label>
+        <label class="feature-card"><span class="feature-card-top"><span class="feature-icon"><svg class="icon"><use href="#i-rank"/></svg></span><span class="feature-title">Reranking</span><input type="checkbox" name="rerank" aria-label="Reranking" aria-describedby="rerank-description"></span><span class="feature-description" id="rerank-description">Move the most relevant passages to the top.</span><span class="feature-kind">RELEVANCE</span></label>
+        <label class="feature-card"><span class="feature-card-top"><span class="feature-icon"><svg class="icon"><use href="#i-shield"/></svg></span><span class="feature-title">CRAG</span><input type="checkbox" name="crag" aria-label="CRAG" aria-describedby="crag-description"></span><span class="feature-description" id="crag-description">Check whether the evidence supports an answer.</span><span class="feature-kind">EVIDENCE CHECK</span></label>
+        <label class="feature-card"><span class="feature-card-top"><span class="feature-icon"><svg class="icon"><use href="#i-globe"/></svg></span><span class="feature-title">Web fallback</span><input type="checkbox" name="web" aria-label="Web fallback" aria-describedby="web-description"></span><span class="feature-description" id="web-description">Look online when local evidence falls short.</span><span class="feature-kind">REQUIRES CRAG <svg class="icon tiny"><use href="#i-info"/></svg></span></label>
+      </fieldset>
+      <div class="guardrail-note"><svg class="icon"><use href="#i-shield"/></svg><div><strong>Safety checks stay on</strong><p>Input and answer checks run automatically.</p></div></div>
+    </aside>
+
+    <div class="workspace">
+      <main id="main-content">
+        <section class="page-intro"><div><h1>Ask a question. Shape your pipeline. See how the answer comes together.</h1></div><span class="intro-mark" aria-hidden="true"><svg class="icon"><use href="#i-flow"/></svg></span></section>
+
+        <section class="query-card" aria-labelledby="query-title">
+          <form id="question-form">
+            <div class="query-heading"><h2 id="query-title"><svg class="icon"><use href="#i-search"/></svg> What would you like to explore?</h2></div>
+            <label class="sr-only" for="question">Research question</label>
+            <textarea id="question" name="question" rows="3" maxlength="2000" placeholder="What monitoring does WHO recommend for adults with type 2 diabetes?" required></textarea>
+            <div class="examples"><span>TRY A QUESTION</span><button type="button" class="example" data-example="evidence"><svg class="icon tiny"><use href="#i-book"/></svg> Monitoring guidance</button><button type="button" class="example" data-example="cohort"><svg class="icon tiny"><use href="#i-database"/></svg> Count a cohort</button><button type="button" class="example" data-example="both"><svg class="icon tiny"><use href="#i-layers"/></svg> Combined research</button></div>
+            <div class="query-footer"><div class="pipeline-selection"><span class="selection-label">PIPELINE</span><div id="selected-features" class="selected-features"></div></div><div class="run-actions"><span class="keyboard-hint">Ctrl / ⌘ ↵</span><button type="submit" class="button button-primary" id="run-button"><span id="run-label">Run research</span><svg class="icon" id="run-icon"><use href="#i-arrow"/></svg></button></div></div>
+          </form>
+        </section>
+
+        <div class="research-note"><svg class="icon tiny"><use href="#i-info"/></svg><span>For research and education. Uses public evidence and synthetic records. No real patient data or personal medical advice.</span></div>
+        <div id="form-error" class="notice notice-error" role="alert" hidden></div>
+        <div id="dependency-message" class="sr-only" role="status" aria-live="polite"></div>
+
+        <section class="results-section" aria-labelledby="results-title" aria-busy="false">
+          <div class="results-heading"><div><h2 id="results-title">Research output</h2></div></div>
+
+          <div id="empty-state" class="empty-state">
+            <div class="planned-flow-header"><span><svg class="icon"><use href="#i-flow"/></svg> YOUR PLANNED FLOW</span><span>Configured by you</span></div>
+            <div id="planned-flow" class="planned-flow" aria-label="Planned execution pipeline"></div>
+            <div class="empty-content"><div class="empty-illustration" aria-hidden="true"><div class="paper paper-back"></div><div class="paper paper-front"><svg class="icon"><use href="#i-book"/></svg><span></span><span></span><span></span></div><span class="paper-check"><svg class="icon"><use href="#i-check"/></svg></span></div><h3>Your answer, with a paper trail.</h3><p>Run your first question to see the result and follow every step. <br>Expand any step to inspect what went in and what came out.</p><div class="empty-tags"><span><svg class="icon tiny"><use href="#i-check"/></svg> Cited sources</span><span><svg class="icon tiny"><use href="#i-check"/></svg> Visible stage outputs</span><span><svg class="icon tiny"><use href="#i-check"/></svg> Inspectable SQL</span></div></div>
+          </div>
+
+          <div id="loading-state" class="loading-state" role="status" aria-live="polite" hidden><span class="loading-orbit"><svg class="icon"><use href="#i-flow"/></svg></span><h3>Following the evidence…</h3><p>Your selected pipeline is running. The first model load can take a little longer.</p><span id="elapsed-time" class="elapsed-time">0s elapsed</span></div>
+
+          <div id="result-content" class="result-grid" hidden>
+            <div class="answer-column">
+              <section class="answer-card"><div class="answer-tabs" role="tablist" aria-label="Research result views"><button id="tab-answer" class="answer-tab active" role="tab" aria-selected="true" aria-controls="panel-answer" data-tab="answer">Answer</button><button id="tab-sources" class="answer-tab" role="tab" aria-selected="false" aria-controls="panel-sources" tabindex="-1" data-tab="sources">Sources <span id="source-count">0</span></button><button id="tab-data" class="answer-tab" role="tab" aria-selected="false" aria-controls="panel-data" tabindex="-1" data-tab="data">Run data</button><button class="icon-button copy-button" id="copy-button" aria-label="Copy current result"><svg class="icon"><use href="#i-copy"/></svg></button></div><div id="panel-answer" class="answer-panel" role="tabpanel" aria-labelledby="tab-answer" tabindex="0"></div><div id="panel-sources" class="answer-panel" role="tabpanel" aria-labelledby="tab-sources" tabindex="0" hidden></div><div id="panel-data" class="answer-panel" role="tabpanel" aria-labelledby="tab-data" tabindex="0" hidden></div></section>
+              <div class="result-footer"><svg class="icon tiny"><use href="#i-shield"/></svg><span>Automated checks do not verify clinical accuracy or prove citation support.</span></div>
+            </div>
+            <section class="flow-card" aria-labelledby="flow-title"><div class="flow-header"><div><h3 id="flow-title"><svg class="icon"><use href="#i-flow"/></svg> Execution flow</h3><p id="flow-summary"></p></div><button class="text-button" id="expand-all">Expand all</button></div><div id="flow-notes" class="flow-notes" hidden></div><div id="flow-steps" class="flow-steps"></div><div class="flow-end"><span></span> End of run</div></section>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

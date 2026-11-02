@@ -6,6 +6,7 @@ from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langgraph.graph import END, START, StateGraph
 
+from assistant.tracing import traced_node
 from safety.checks import check_evidence_output, check_input, decision
 
 from rag.evidence_common import (
@@ -100,6 +101,7 @@ def build_pipeline(
     crag=False,
     web=False,
     answer_fn=None,
+    on_step=None,
 ):
     """
     answer_fn receives graph state and returns answer text.
@@ -460,8 +462,25 @@ def build_pipeline(
         "finish": finish_node,
     }
 
+    titles = {
+        "guard_input": "Evidence input check",
+        "hyde": "HyDE query expansion",
+        "retrieve_local": "Hybrid evidence retrieval",
+        "retrieve_web": "Web evidence fallback",
+        "chunk_web": "Web passage extraction",
+        "rank_web": "Web similarity ranking",
+        "rerank": "Cross-encoder reranking",
+        "select": "Passage selection",
+        "grade": "CRAG evidence check",
+        "finish": "Final evidence context",
+        "generate": "Evidence answer generation",
+        "guard_output": "Citation & answer check",
+    }
+
     for name, function in nodes.items():
-        graph.add_node(name, function)
+        graph.add_node(name, traced_node(
+            on_step, f"evidence.{name}", titles[name], function,
+        ))
 
     graph.add_edge(START, "guard_input")
     graph.add_conditional_edges(
@@ -497,8 +516,12 @@ def build_pipeline(
     graph.add_edge("chunk_web", "rank_web")
 
     if answer_fn is not None:
-        graph.add_node("generate", generate_node)
-        graph.add_node("guard_output", output_guard_node)
+        graph.add_node("generate", traced_node(
+            on_step, "evidence.generate", titles["generate"], generate_node,
+        ))
+        graph.add_node("guard_output", traced_node(
+            on_step, "evidence.guard_output", titles["guard_output"], output_guard_node,
+        ))
         graph.add_edge("finish", "generate")
         graph.add_edge("generate", "guard_output")
         graph.add_edge("guard_output", END)
